@@ -1,0 +1,342 @@
+# =============================================================================
+# survey — the question cluster: Question (dual-natured: questions AND pages,
+#   SVM-5, ported verbatim as ONE table) + QuestionAnswer (labels: choice
+#   answers / matrix columns / matrix rows) + the conditional-edge junction.
+#
+# PORT DECISIONS (source: docs/odoo/marketing/survey — cycle 9, SPEC.md
+#   §2.2/§2.3):
+#  - ONE table for pages and questions (register row SVM-5 "port verbatim"
+#    chosen over split): is_page is the switch; pages and questions share
+#    ONE sequence space (conditional triggers must reference earlier
+#    sequence); the is_page/type XOR is made DB-level by the hardening
+#    migration (upstream was ORM-only — strengthening recorded).
+#  - is_scored_question is an explicit scored marker whose correct-answer
+#    semantics score Option<f64> equality: 0.0 correct answers ARE
+#    scoreable (README note 9 truthiness defect not ported).
+#  - page_id is a WRITE-MAINTAINED DERIVATION (SVM-8): recomputed by the
+#    question upsert/reorder verbs as "last page before this question in
+#    sequence order". No ORM recompute exists to drift; a consistency probe
+#    asserts it.
+#  - triggering_answer_ids is THE ONLY STORED CONDITIONAL EDGE (SVM-7): the
+#    junction survey_question_triggering_answers. The domain restriction
+#    (answers of earlier simple/multiple-choice questions) is write-service
+#    enforced.
+#  - Validation clamps (validation_required forced false outside
+#    char/numerical/date/datetime) ride the update verb (SVM-2 cluster).
+# =============================================================================
+
+models:
+
+  - name: Question
+    collection: survey_questions
+    description: "Survey Question (Odoo `survey.question`) — dual-natured: is_page=true rows are PAGE breaks, is_page=false rows are questions; one shared sequence space. Carries the full validation/clamp cluster, the correct-answer payloads (numerical/date), the scoring knobs, the matrix configuration, and the per-question time limit for speed rating."
+    fields:
+      id:
+        type: uuid
+        attributes: ["@id", "@default(uuid)"]
+        description: "Unique record id"
+      survey_id:
+        type: uuid
+        attributes: ["@required", "@indexed", "@foreign_key(Survey.survey_surveys)"]
+        description: "Owning survey (relation-driven FK, ON DELETE CASCADE). Deletion of a survey's questions while session_state='in_progress' is refused by the hardening-migration trigger (SV-D1 — a raw DELETE mid-session corrupts the running cursor)."
+      sequence:
+        type: integer
+        attributes: ["@required", "@default(10)"]
+        description: "ONE shared sequence space for pages AND questions — load-bearing: conditional triggers must reference earlier sequence, and page_id derives from this order."
+      is_page:
+        type: boolean
+        attributes: ["@required", "@default(false)"]
+        description: "The dual-nature switch. The (is_page = (question_type IS NULL)) XOR is made DB-level by the hardening migration (SV-C3, upstream ORM-only — strengthening recorded)."
+      question_type:
+        type: SurveyQuestionType?
+        description: "NULL for pages, the type for questions. CLAMPED (SVM-2): a question's type persists until a guard clamps it — never silently derived."
+      title:
+        type: string
+        attributes: ["@required", "@max(255)"]
+        description: "Question (or page) title."
+      description:
+        type: string?
+        description: "Helper text under the title."
+      question_placeholder:
+        type: string?
+        description: "Input placeholder — clamped CLEARED for choice/matrix types (SVM-2 cluster)."
+      background_image:
+        type: string?
+        description: "Asset key — clamped pages-only (SVM-2 cluster)."
+      random_questions_count:
+        type: integer
+        attributes: ["@default(1)"]
+        description: "Per-section sampling size when the survey's questions_selection = random."
+      is_scored_question:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Scored marker — CLAMP-guarded (SVM-2). Correctness scores an explicit Option comparison, so a 0.0 correct answer IS scoreable (upstream's scalar truthiness defect does not port)."
+      answer_numerical_box:
+        type: float?
+        description: "The correct numerical answer — 0.0 is a VALID correct value (see is_scored_question)."
+      answer_date:
+        type: date?
+        description: "The correct date answer. CHECK set-only-when-scored-and-typed rides the hardening migration (SV-S11)."
+      answer_datetime:
+        type: datetime?
+        description: "The correct datetime answer — same SV-S11 CHECK family."
+      answer_score:
+        type: float
+        attributes: ["@default(0.0)"]
+        description: "Points for a correct answer — QUESTION-level CHECK >= 0 rides the hardening migration (SV-S10; the ANSWER-level field deliberately allows negatives for penalty scoring)."
+      save_as_email:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Intake side-writes the answer onto the input row's email (the leaderboard/pool identity half B)."
+      save_as_nickname:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Intake side-writes the answer onto the input row's nickname (leaderboard identity)."
+      matrix_subtype:
+        type: SurveyMatrixSubtype
+        attributes: ["@default(simple)"]
+        description: "Matrix flavor — simple (one cell per row) or multiple (checkboxes per row)."
+      scale_min:
+        type: integer
+        attributes: ["@default(0)"]
+        description: "Scale floor. CHECK 0 <= min < max <= 10 rides the hardening migration (SV-S12)."
+      scale_max:
+        type: integer
+        attributes: ["@default(10)"]
+        description: "Scale ceiling — same SV-S12 CHECK."
+      scale_min_label:
+        type: string?
+        description: "Left-end label of the scale."
+      scale_mid_label:
+        type: string?
+        description: "Middle label of the scale."
+      scale_max_label:
+        type: string?
+        description: "Right-end label of the scale."
+      is_time_limited:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Per-question time-limit toggle (speed rating eligibility). CHECK positive-when-limited rides the hardening migration (SV-S13)."
+      time_limit:
+        type: integer?
+        description: "Per-question limit in seconds — over-limit answers score exactly 50 percent (the speed formula's mid-window)."
+      is_time_customized:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Recorded when the question's limit diverges from the survey's propagated default."
+      comments_allowed:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Free-comment toggle under the answer."
+      comments_message:
+        type: string?
+        description: "The comment prompt."
+      comment_count_as_answer:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "A comment alone satisfies a mandatory question."
+      validation_required:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Format-validation toggle — CLAMPED false outside char_box/numerical_box/date/datetime (SVM-2 cluster)."
+      validation_email:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "char_box: must be an email address."
+      validation_length_min:
+        type: integer
+        attributes: ["@default(0)"]
+        description: "Length band floor — CHECK >= 0 and min <= max ride the hardening migration (SV-S9 family)."
+      validation_length_max:
+        type: integer
+        attributes: ["@default(0)"]
+        description: "Length band ceiling — same SV-S9 CHECK."
+      validation_min_float_value:
+        type: float?
+        description: "Numerical band floor — CHECK min <= max rides the hardening migration."
+      validation_max_float_value:
+        type: float?
+        description: "Numerical band ceiling — same CHECK."
+      validation_min_date:
+        type: date?
+        description: "Date band floor — CHECK min <= max rides the hardening migration."
+      validation_max_date:
+        type: date?
+        description: "Date band ceiling — same CHECK."
+      validation_min_datetime:
+        type: datetime?
+        description: "Datetime band floor — CHECK min <= max rides the hardening migration."
+      validation_max_datetime:
+        type: datetime?
+        description: "Datetime band ceiling — same CHECK."
+      validation_error_msg:
+        type: string?
+        description: "Shown when format validation fails."
+      constr_error_msg:
+        type: string?
+        description: "Shown when the mandatory constraint fails."
+      constr_mandatory:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Mandatory flag — an empty mandatory answer errors ONLY when the survey is NOT users_can_go_back (load-bearing roaming semantics at intake)."
+      page_id:
+        type: uuid?
+        attributes: ["@exclude_from_foreign_key_check"]
+        description: "Logical self-ref to the enclosing page — WRITE-MAINTAINED DERIVATION (SVM-8): recomputed by the question upsert/reorder verbs as 'last page before this question in sequence order'. No ORM recompute exists to drift; a consistency probe asserts it. No DB FK (the derivation would fight cascade order)."
+      metadata:
+        type: Metadata
+        attributes: ["@audit_metadata"]
+        description: "Audit metadata"
+
+    relations:
+      survey:
+        type: Survey
+        attributes: ["@one", "@foreign_key(survey_id)", "@on_delete(cascade)"]
+        description: "Owning survey (real FK survey.survey_questions.survey_id -> survey.survey_surveys, cascade)"
+
+    indexes:
+      - type: index
+        fields: [survey_id, sequence]
+        description: "Section ordering reads — the shared page/question sequence space"
+
+  # ===========================================================================
+  # survey_question_answers — labels for choice/matrix questions (Odoo
+  # survey.question.answer). The role XOR (choice/matrix-column via
+  # question_id XOR matrix-row via matrix_question_id) is made DB-level by
+  # the hardening migration (SV-C4).
+  # ===========================================================================
+  - name: QuestionAnswer
+    collection: survey_question_answers
+    description: "Question Answer / label (Odoo `survey.question.answer`) — serves three roles: choice answers and matrix COLUMNS (question_id set), and matrix ROWS (matrix_question_id set). is_correct + answer_score carry the scoring payload (answer-level scores allow NEGATIVES — penalty scoring)."
+    fields:
+      id:
+        type: uuid
+        attributes: ["@id", "@default(uuid)"]
+        description: "Unique record id"
+      question_id:
+        type: uuid?
+        attributes: ["@indexed", "@foreign_key(Question.survey_questions)"]
+        description: "The owning choice/matrix-column question (relation-driven FK, ON DELETE CASCADE). Exactly one of (question_id, matrix_question_id) is set — the SV-C4 role XOR, DB-level via the hardening migration."
+      matrix_question_id:
+        type: uuid?
+        attributes: ["@indexed", "@foreign_key(Question.survey_questions)"]
+        description: "The matrix question this row is a ROW of (relation-driven FK, ON DELETE CASCADE)."
+      sequence:
+        type: integer
+        attributes: ["@required", "@default(10)"]
+        description: "Label order."
+      value:
+        type: string?
+        description: "The label text. CHECK value/value_image_filename not-both-null rides the hardening migration (SV-S14)."
+      value_image:
+        type: string?
+        description: "Asset key of the label image."
+      value_image_filename:
+        type: string?
+        description: "Filename half of the image pair (SV-S14's not-both-null partner)."
+      is_correct:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Correctness marker for choice scoring."
+      answer_score:
+        type: float
+        attributes: ["@default(0.0)"]
+        description: "Points for this label — NEGATIVES DELIBERATELY ALLOWED (penalty scoring; the question-level answer_score CHECK >= 0 does not apply here)."
+      metadata:
+        type: Metadata
+        attributes: ["@audit_metadata"]
+        description: "Audit metadata"
+
+    relations:
+      question:
+        type: Question?
+        attributes: ["@one", "@foreign_key(question_id)", "@on_delete(cascade)"]
+        description: "The choice/matrix-column role's owning question (real FK, cascade)"
+      matrix_question:
+        type: Question?
+        attributes: ["@one", "@foreign_key(matrix_question_id)", "@on_delete(cascade)"]
+        description: "The matrix-row role's matrix question (real FK, cascade)"
+
+    indexes:
+      - type: index
+        fields: [question_id, sequence]
+        description: "Label ordering reads per question"
+
+  # ===========================================================================
+  # survey_question_triggering_answers — THE ONLY STORED CONDITIONAL EDGE
+  # (SVM-7): a dependent question appears when any of its triggering answers
+  # was chosen. The domain restriction (answers of EARLIER
+  # simple_choice/multiple_choice questions) is write-service enforced.
+  # ===========================================================================
+  - name: SurveyQuestionTriggeringAnswer
+    collection: survey_question_triggering_answers
+    description: "Conditional-edge row (Odoo survey.question triggering_answer_ids m2m) — the dependent question (question_id) is activated when the triggering answer (suggested_answer_id) is selected. The only stored conditional state; skip-inactive + clear-inactive intake steps read it."
+    fields:
+      id:
+        type: uuid
+        attributes: ["@id", "@default(uuid)"]
+        description: "Unique record id"
+      question_id:
+        type: uuid
+        attributes: ["@required", "@indexed", "@foreign_key(Question.survey_questions)"]
+        description: "The DEPENDENT question (relation-driven FK, ON DELETE CASCADE)."
+      suggested_answer_id:
+        type: uuid
+        attributes: ["@required", "@indexed", "@foreign_key(QuestionAnswer.survey_question_answers)"]
+        description: "The TRIGGERING answer (relation-driven FK, ON DELETE CASCADE)."
+      metadata:
+        type: Metadata
+        attributes: ["@audit_metadata"]
+        description: "Audit metadata"
+
+    relations:
+      question:
+        type: Question
+        attributes: ["@one", "@foreign_key(question_id)", "@on_delete(cascade)"]
+        description: "The dependent question (real FK, cascade)"
+      suggested_answer:
+        type: QuestionAnswer
+        attributes: ["@one", "@foreign_key(suggested_answer_id)", "@on_delete(cascade)"]
+        description: "The triggering answer (real FK, cascade)"
+
+    indexes:
+      - type: unique
+        fields: [question_id, suggested_answer_id]
+        description: "The edge is a set — the pair is unique among live rows"
+
+# =============================================================================
+# Enums (question cluster)
+# =============================================================================
+
+enums:
+  - name: SurveyQuestionType
+    description: "The dual-nature discriminator's question half (pages carry NULL) — the intake dispatcher keys on it"
+    variants:
+      - name: simple_choice
+        description: "Radio choice (one of N) — the create-time default for new questions (pages carry NULL)"
+        default: true
+      - name: multiple_choice
+        description: "Checkbox choice (many of N)"
+      - name: text_box
+        description: "Multi-line free text"
+      - name: char_box
+        description: "Single-line free text (ALSO the storage type for comments — always char_box)"
+      - name: numerical_box
+        description: "Numeric answer (0.0 is a valid value AND a valid correct answer)"
+      - name: scale
+        description: "Integer scale between scale_min/scale_max"
+      - name: date
+        description: "Date picker"
+      - name: datetime
+        description: "Datetime picker"
+      - name: matrix
+        description: "Matrix (rows x columns; subtype simple/multiple)"
+
+  - name: SurveyMatrixSubtype
+    description: "Matrix flavor — one answer per row (simple) or checkboxes per row (multiple)"
+    variants:
+      - name: simple
+        description: "Radio per row"
+        default: true
+      - name: multiple
+        description: "Checkbox per row"

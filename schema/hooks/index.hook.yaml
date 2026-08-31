@@ -1,0 +1,90 @@
+# survey Module - Hooks Index
+# Version: 2.0
+#
+# Module-level configuration for hooks (lifecycle behaviors).
+# Hooks define: state machines, rules, permissions, triggers, computed fields.
+#
+# Hook files:
+#   survey.hook.yaml            the R-SV* rules with enforcement loci and the
+#                               lifecycle declarations for every entity
+#   survey_input_state.hook.yaml  the machine — UserInput.state (the attempt)
+#
+# This index carries: audit critical events (the fail-closed / anti-cheat
+# observables) and the ZERO-CRON declaration.
+
+module: survey
+version: 2
+
+# Import all hook files (informational — discovery is a recursive glob,
+# but keeping the list accurate helps readers).
+imports:
+  - survey.hook.yaml
+  - survey_input_state.hook.yaml
+
+# NOTE — Survey.session_state is hand_set with NO machine file, deliberate.
+# The column is NULLABLE (NULL = not armed / ended; the arm verb enters from
+# NULL and the end verb writes NULL back), and the code generator's state
+# machine emission assumes a non-nullable field (it calls Display/FromStr on
+# the field type directly, which does not compile for Option<...>). The
+# machine's declaration of record is the comment block on the field in
+# schema/models/survey.model.yaml: NULL-boundary edges (arm: NULL -> ready,
+# end: {ready|in_progress} -> NULL) and the one declared-edge transition
+# (start: ready -> in_progress, the lazy open on first advance). The arm/
+# start/end verbs enforce it. Restore a machine file when the generator
+# grows nullable-state support.
+
+# =============================================================================
+# Module-level configuration
+# =============================================================================
+config:
+  audit:
+    retention_days: 2555
+    archive_after_days: 365
+    critical_events:
+      - survey_answer_started         # attempt mint + begun — who entered what
+      - survey_answer_completed       # the funnel's terminal edge per input
+      - survey_certification_grant_refused   # the fail-closed observables: unwired port / NULL user_id — never a silent no-grant
+      - survey_session_advanced       # every cursor move (the SV-B4 lock's observable)
+      - survey_token_rotated          # old nonce died, new minted
+      - survey_code_verify_failed     # the Tier B lockout counters' feed
+
+  notifications:
+    email_enabled: false
+    sms_enabled: false
+    push_enabled: false
+
+# =============================================================================
+# Shared domain events
+# =============================================================================
+# ZERO survey-owned outbox events by design (SPEC.md §8): the module owns NO
+# outbox schema, so the host outbox_schemas list is untouched. Everything
+# outbound crosses as one of two host-composed seams:
+#  - CertificationPassed (INBOUND to engagement — the contract is ALREADY
+#    pinned by the consumer at backbone-engagement
+#    schema/hooks/index.hook.yaml:58-83; this module is the PRODUCER and
+#    delivers through the fail-closed CertificationGrantPort, never a direct
+#    Cargo edge). Idempotency key (derived by the consumer):
+#    event:certification:{certification_ref}:{attempt_ref} with
+#    certification_ref = "survey:{survey_id}" and attempt_ref = the winning
+#    input uuid. Once-per-user semantics are PRODUCER-side: publish only on
+#    the FIRST successful completion in the attempt pool (SPEC.md §7.1).
+#  - SurveyEventSink facts (participant_invited carrying the Tier A link,
+#    answer_completed, session_started / session_advanced / session_ended
+#    staging onto messaging.outbox_events under the record-shaped channel
+#    survey.survey_{survey_id}) — the trait + tracing default live in
+#    src/application/service/event_sink.rs.
+events: {}
+
+# =============================================================================
+# Scheduled jobs (ADR-0020 postures)
+# =============================================================================
+# ZERO — `scheduled_jobs: {}` (the DSL's map shape spelled empty) is the
+# deliberate declaration (SPEC.md §11):
+#  - badge granting is the post-commit CertificationPassed publish (event
+#    path, the EN-88 replacement for upstream's inline cron invocation);
+#  - session advance is verb-driven push + attendee polling;
+#  - expiry / lazy completion stays read-path (done on next page view past
+#    the survey time limit);
+#  - upstream's survey_session cron does not port as a job.
+# Nothing in this module owns a clock.
+scheduled_jobs: {}

@@ -1,0 +1,333 @@
+# =============================================================================
+# survey — the attempt cluster: UserInput (survey.user_input, the attempt)
+#   + UserInputLine (survey.user_input.line, the polymorphic answer line) +
+#   the FROZEN-DENOMINATOR junction.
+#
+# PORT DECISIONS (source: docs/odoo/marketing/survey — cycle 9, SPEC.md
+#   §2.4/§2.5/§2.6):
+#  - UserInput and UserInputLine are READ-ONLY over HTTP (read_only: true —
+#    the engagement rating posture): every write goes through the typed
+#    intake/verb paths; generic mutation would bypass token discipline.
+#  - The upstream never-expiring uuid4 access_token is replaced by a TIER A
+#    capability ON the row (ADR-0018): token_nonce selector + mandatory
+#    token_expires_at + HMAC MAC over (id, nonce, grant, exp) — the
+#    engagement rating precedent. MULTI-use within the attempt (an attempt
+#    spans many submits); rotation mints a fresh nonce atomically.
+#  - invite_token is DELIBERATELY NOT UNIQUE: it names an attempt POOL
+#    (README note 5); attempt counting is the raw-SQL self-join
+#    (SPEC.md §2.6), flushed inside the caller's transaction.
+#  - state is HAND-SET (machine survey_input_state, schema/hooks/
+#    survey_input_state.hook.yaml) + DB-level MONOTONIC trigger (the hand
+#    *monotonic* migration — deliberate strengthening beyond Odoo's
+#    controller-only check; register row SVM-9).
+#  - predefined_question_ids is THE FROZEN SCORING DENOMINATOR: snapshotted
+#    at input create (TR-SV-5 verbatim), pruned at mark_done; later survey
+#    edits never change existing scores.
+#  - UserInputLine.answer_score / answer_is_correct / speed_seconds are
+#    written ONCE at submit; immutable outside the sanctioned
+#    regrade_question verb (SV-B2 fixed loudly — typed error + BEFORE
+#    UPDATE trigger firing on raw SQL).
+#  - wire_identity_key is an OPAQUE host-minted realtime handle (guest id
+#    or user key), stamped at join/begin behind the host-mounted guest
+#    middleware. The module never interprets it; the host's
+#    ThreadAccessResolver answers can_read from it.
+# =============================================================================
+
+models:
+
+  - name: UserInput
+    collection: survey_user_inputs
+    read_only: true
+    description: "User Input (Odoo `survey.user_input`) — THE ATTEMPT. One row per participant run: Tier A capability columns ON the row, the hand-set new/in_progress/done lifecycle with the DB-level monotonic guard, the stored scoring aggregates (percentage 0-floored, raw total that CAN go negative — SVM-10 asymmetry kept), and the realtime identity handle. Read-only over HTTP: writes happen only through the intake/verb paths."
+    fields:
+      id:
+        type: uuid
+        attributes: ["@id", "@default(uuid)"]
+        description: "Unique record id"
+      survey_id:
+        type: uuid
+        attributes: ["@required", "@indexed", "@foreign_key(Survey.survey_surveys)"]
+        description: "The surveyed survey (relation-driven FK, ON DELETE CASCADE)."
+
+      # ---- the Tier A capability (ADR-0018; replaces the uuid4 access_token) --
+      token_nonce:
+        type: string
+        attributes: ["@required", "@max(64)", "@indexed"]
+        description: "128-bit hex SELECTOR of the per-attempt capability — the public link carries {input_id}.{nonce}.{exp}.{mac}; the MAC is HMAC-SHA256 over (id, nonce, grant, exp) with a server secret. The nonce alone is not the capability: a leaked row is inert. MULTI-USE within the attempt (unlike the rating single-use submit); rotation (officer verb or invitation resend) mints a fresh nonce + expiry atomically. Partial-UNIQUE among live rows rides the hardening migration."
+      token_expires_at:
+        type: datetime
+        attributes: ["@required"]
+        description: "MANDATORY expiry (ADR-0018 Tier A): stamped at mint (config TTL, default 30 d), re-stamped on rotate/resend. Expired attempts are refused with a typed 410; the clock is UTC everywhere (SV-B1 — the naive now() defect does not port)."
+
+      # ---- the attempt pool (SPEC.md §2.6) --------------------------------------
+      invite_token:
+        type: string?
+        attributes: ["@max(64)"]
+        description: "DELIBERATELY NOT UNIQUE — names an attempt POOL (the invitation's recipient set). Attempt counting is the raw-SQL self-join: same survey + state=done + test_entry IS NOT TRUE + (invite_token shared or both NULL) + (same partner_id OR same email), flushed inside the caller's transaction. The resend verb re-enters through the same pool."
+      partner_id:
+        type: uuid?
+        attributes: ["@exclude_from_foreign_key_check"]
+        description: "The invited participant # logical ref party.Party.id (no DB constraint) — identity half A of the pool join."
+      email:
+        type: string?
+        attributes: ["@max(320)"]
+        description: "Participant email — identity half B of the pool join; side-written by the save_as_email intake step."
+      nickname:
+        type: string?
+        attributes: ["@max(120)"]
+        description: "Leaderboard identity — side-written by the save_as_nickname intake step."
+      user_id:
+        type: uuid?
+        attributes: ["@exclude_from_foreign_key_check"]
+        description: "The authenticated taker # logical ref sapiens.User.id — REQUIRED for certification publication (the publication gate refuses loudly on NULL with a typed audit record; SPEC.md §7.1)."
+      wire_identity_key:
+        type: string?
+        attributes: ["@max(120)", "@indexed"]
+        description: "OPAQUE host-minted realtime handle (mail guest id or user key), stamped at join/begin through the host composition (SPEC.md §8). No FK; this module never interprets it — the host's ThreadAccessResolver answers can_read(identity, 'survey.survey', survey_id) by matching live rows on it."
+      test_entry:
+        type: boolean
+        attributes: ["@required", "@default(false)"]
+        description: "Test-mode entry — excluded from attempt counts AND (deliberate deviation, SV-B5) from the survey KPI computes."
+
+      # ---- the hand-set lifecycle (machine survey_input_state) ------------------
+      state:
+        type: SurveyInputState
+        attributes: ["@required", "@default(new)"]
+        lifecycle:
+          shape: hand_set
+          state_machine: survey_input_state
+          display_labels:
+            new: "New"
+            in_progress: "In Progress"
+            done: "Completed"
+        description: "THE lifecycle — new -> in_progress -> done, exactly three values, NO skipped value (skipping is per-LINE), NO label inversion (machine value = contract). Hand-set through the begin/mark_done verbs + the session-end bulk-done; a DB-level monotonic trigger (the hand *monotonic* migration) refuses ANY backward edge, including raw SQL — deliberate strengthening beyond Odoo's controller-only check (SVM-9)."
+
+      # ---- clocks & cursors -------------------------------------------------------
+      start_datetime:
+        type: datetime?
+        description: "Stamped by the begin verb (new -> in_progress)."
+      end_datetime:
+        type: datetime?
+        description: "Stamped ONLY on the -> done edge by the same conditional UPDATE — a double mark_done is a no-op refusal, never a timestamp rewrite."
+      deadline:
+        type: datetime?
+        description: "The attempt's time ceiling — compared IN UTC on every gate (SV-B1 fixed): the survey time limit + the +10 s grace arm."
+      is_session_answer:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Gates speed-rating eligibility (the live-session answer marker)."
+      last_displayed_page_id:
+        type: uuid?
+        attributes: ["@exclude_from_foreign_key_check"]
+        description: "The resume cursor # logical ref Question.id (a page row) — advanced on each page render; no FK (the cursor would fight page reordering)."
+
+      # ---- stored scoring aggregates (recomputed by the scoring service) ---------
+      scoring_percentage:
+        type: float
+        attributes: ["@required", "@default(0.0)"]
+        description: "0-floored percentage against the frozen denominator — recomputed on line writes; evaluated live (mid-attempt too) for scoring_success."
+      scoring_total:
+        type: float
+        attributes: ["@required", "@default(0.0)"]
+        description: "RAW total — CAN GO NEGATIVE (SVM-10 asymmetry kept): the leaderboard ranks by raw total, statistics read the clamped percentage."
+      scoring_success:
+        type: boolean
+        attributes: ["@required", "@default(false)"]
+        description: "percentage >= survey.scoring_success_min, evaluated live — the certification publication gate's scoring arm."
+
+      metadata:
+        type: Metadata
+        attributes: ["@audit_metadata"]
+        description: "Audit metadata"
+
+    relations:
+      survey:
+        type: Survey
+        attributes: ["@one", "@foreign_key(survey_id)", "@on_delete(cascade)"]
+        description: "The surveyed survey (real FK survey.survey_user_inputs.survey_id -> survey.survey_surveys, cascade)"
+
+    indexes:
+      - type: index
+        fields: [survey_id, invite_token]
+        description: "The attempt-pool self-join's leading arm"
+      - type: index
+        fields: [survey_id, state]
+        description: "Leaderboard / session scans (live attendees, done-set reads)"
+      - type: index
+        fields: [survey_id, partner_id]
+        description: "Pool identity half A"
+      - type: index
+        fields: [survey_id, email]
+        description: "Pool identity half B"
+
+  # ===========================================================================
+  # survey_user_input_lines — the answer line (Odoo survey.user_input.line).
+  # Polymorphic value columns selected by answer_type; the typed-value
+  # presence XOR (SV-C5) is intake logic (zero-exemptions for float/scale),
+  # NOT a column CHECK — recorded decision.
+  # ===========================================================================
+  - name: UserInputLine
+    collection: survey_user_input_lines
+    read_only: true
+    description: "User Input Line (Odoo `survey.user_input.line`) — ONE ANSWER: the polymorphic value columns selected by answer_type, the chosen label(s), the skip marker, and the score payload written once at submit (immutable outside the sanctioned regrade_question verb — SV-B2). Read-only over HTTP (system-written; mirrors the upstream 1/0/0/0 officer ACL)."
+    fields:
+      id:
+        type: uuid
+        attributes: ["@id", "@default(uuid)"]
+        description: "Unique record id"
+      user_input_id:
+        type: uuid
+        attributes: ["@required", "@indexed", "@foreign_key(UserInput.survey_user_inputs)"]
+        description: "The owning attempt (relation-driven FK, ON DELETE CASCADE)."
+      survey_id:
+        type: uuid
+        attributes: ["@foreign_key(Survey.survey_surveys)"]
+        description: "DENORMALIZED from the input (upstream stored-related; kept stored for the cross-facet reads — per-question statistics across attempts)."
+      question_id:
+        type: uuid
+        attributes: ["@required", "@indexed", "@foreign_key(Question.survey_questions)"]
+        description: "The answered question (relation-driven FK, ON DELETE CASCADE)."
+      suggested_answer_id:
+        type: uuid?
+        attributes: ["@exclude_from_foreign_key_check"]
+        description: "The chosen answer label when answer_type = suggestion # logical ref QuestionAnswer.id (no DB constraint: the intake path validates it against the question's live label set)."
+      matrix_row_id:
+        type: uuid?
+        attributes: ["@exclude_from_foreign_key_check"]
+        description: "The matrix-row discriminator (same comodel as suggested_answer_id) # logical ref QuestionAnswer.id."
+      skipped:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "The skip marker — an empty choice answer materializes a skipped line (the upstream [False] marker's observable effect). Service invariant: skipped <=> answer_type IS NULL."
+      answer_type:
+        type: SurveyAnswerType?
+        description: "Selects the value column. The upstream duplicate 'Number' DISPLAY label on numerical_box AND scale does not port — values stay distinct, render labels are the webapp's."
+      value_char_box:
+        type: string?
+        description: "char_box values — ALSO the storage for comments (comments are ALWAYS char_box + this column)."
+      value_text_box:
+        type: string?
+        description: "text_box values."
+      value_numerical_box:
+        type: float?
+        description: "numerical_box values — a legitimate 0.0 passes intake (the zero-exemption kept)."
+      value_scale:
+        type: integer?
+        description: "scale values."
+      value_date:
+        type: date?
+        description: "date values."
+      value_datetime:
+        type: datetime?
+        description: "datetime values."
+      answer_score:
+        type: float?
+        description: "WRITTEN ONCE at submit — immutable outside the sanctioned regrade_question verb (SV-B2): any later change (service OR raw SQL) is refused loudly (typed ScoreDriftRefused + the hardening-migration BEFORE UPDATE trigger)."
+      answer_is_correct:
+        type: boolean?
+        description: "Same write-once immutability as answer_score."
+      speed_seconds:
+        type: integer?
+        description: "RECORDED ADDITION: the elapsed-seconds basis captured AT SUBMIT — the immutable speed snapshot that makes regrade reproducible and drift detectable (the SV-B2 loud fix's substrate)."
+      answered_at:
+        type: datetime
+        attributes: ["@required", "@default(now)"]
+        description: "Capture time — the drift trigger's anchor (OLD.answered_at IS NOT NULL identifies a graded line)."
+
+      metadata:
+        type: Metadata
+        attributes: ["@audit_metadata"]
+        description: "Audit metadata"
+
+    relations:
+      user_input:
+        type: UserInput
+        attributes: ["@one", "@foreign_key(user_input_id)", "@on_delete(cascade)"]
+        description: "The owning attempt (real FK survey.survey_user_input_lines.user_input_id -> survey.survey_user_inputs, cascade)"
+      question:
+        type: Question
+        attributes: ["@one", "@foreign_key(question_id)", "@on_delete(cascade)"]
+        description: "The answered question (real FK survey.survey_user_input_lines.question_id -> survey.survey_questions, cascade)"
+
+    indexes:
+      - type: index
+        fields: [user_input_id, question_id]
+        description: "The per-attempt answer reads (upsert in place / delete-recreate)"
+
+  # ===========================================================================
+  # survey_user_input_predefined_questions — THE FROZEN SCORING DENOMINATOR
+  # (TR-SV-5 verbatim): the question set snapshotted at input create
+  # (random.sample per section when questions_selection = random), read ONLY
+  # by the scoring service, pruned of inactive conditionals at mark_done.
+  # Later survey edits NEVER change existing scores (SPEC.md §5.3).
+  # ===========================================================================
+  - name: SurveyUserInputPredefinedQuestion
+    collection: survey_user_input_predefined_questions
+    description: "Frozen-denominator row (Odoo survey.user_input predefined_question_ids m2m) — the attempt's snapshotted question set. create() snapshots (random per section when selected); mark_done prunes inactive conditional questions; the scoring service reads ONLY this snapshot."
+    fields:
+      id:
+        type: uuid
+        attributes: ["@id", "@default(uuid)"]
+        description: "Unique record id"
+      user_input_id:
+        type: uuid
+        attributes: ["@required", "@indexed", "@foreign_key(UserInput.survey_user_inputs)"]
+        description: "The attempt whose denominator this row freezes (relation-driven FK, ON DELETE CASCADE)."
+      question_id:
+        type: uuid
+        attributes: ["@required", "@indexed", "@foreign_key(Question.survey_questions)"]
+        description: "The snapshotted question (relation-driven FK, ON DELETE CASCADE — deleting a question drops it from every denominator; the spec's delete-block trigger refuses that mid-session)."
+      metadata:
+        type: Metadata
+        attributes: ["@audit_metadata"]
+        description: "Audit metadata"
+
+    relations:
+      user_input:
+        type: UserInput
+        attributes: ["@one", "@foreign_key(user_input_id)", "@on_delete(cascade)"]
+        description: "The owning attempt (real FK, cascade)"
+      question:
+        type: Question
+        attributes: ["@one", "@foreign_key(question_id)", "@on_delete(cascade)"]
+        description: "The snapshotted question (real FK, cascade)"
+
+    indexes:
+      - type: unique
+        fields: [user_input_id, question_id]
+        description: "The denominator is a set — the pair is unique among live rows"
+
+# =============================================================================
+# Enums (attempt cluster)
+# =============================================================================
+
+enums:
+  - name: SurveyInputState
+    description: "THE attempt lifecycle — hand-set through the transition verbs (machine `survey_input_state`; schema/hooks/survey_input_state.hook.yaml); exactly three values, NO skipped (skipping is per-line), NO label inversion (machine value = contract; the display labels are webapp data per ADR-0016 display_labels)"
+    variants:
+      - name: new
+        description: "Minted, not yet begun (the begin verb's source)"
+        default: true
+      - name: in_progress
+        description: "Begun — pages rendering, submits accepted (session attendees may be created directly here when session_state = in_progress)"
+      - name: done
+        description: "Terminal — end_datetime stamped; re-entry refused (the monotonic trigger backstops the verb's conditional UPDATE)"
+
+  - name: SurveyAnswerType
+    description: "The answer line's value-column discriminator — the upstream duplicate 'Number' display label on numerical_box AND scale is dropped (values stay distinct; render labels are the webapp's)"
+    variants:
+      - name: text_box
+        description: "value_text_box"
+        default: true
+      - name: char_box
+        description: "value_char_box (ALSO the comments storage)"
+      - name: numerical_box
+        description: "value_numerical_box (0.0 legitimate)"
+      - name: scale
+        description: "value_scale"
+      - name: date
+        description: "value_date"
+      - name: datetime
+        description: "value_datetime"
+      - name: suggestion
+        description: "suggested_answer_id (+ matrix_row_id for matrix cells)"

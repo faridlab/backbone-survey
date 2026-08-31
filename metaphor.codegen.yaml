@@ -1,0 +1,72 @@
+# Codegen policy for survey.
+#
+# `user_owned` globs are hand-written files that live inside generator-owned trees but are
+# NOT schema-derived. `metaphor schema generate [--force]` skips them wholesale (never reads,
+# merges, or deletes them). Everything else in src/ is regenerated from schema/models.
+#
+# Re-exports/declarations that must sit alongside generated code live inside
+# `// <<< CUSTOM ... // END CUSTOM` markers (application/service/mod.rs, lib.rs)
+# and are preserved by the marker mechanism, not listed here.
+#
+# Declared BEFORE any file lands (the regen-safety contract): a landing
+# without the declaration is clobbered on the next regen; a declaration
+# without the file is the dangling class removed by review — later seats
+# extend this list on the same contract, declaring each hand file in the
+# same change that lands it.
+
+user_owned:
+  # The certification seam (fail-closed by design): the module owns the
+  # trait, the typed error, and the refusing default; the composing host
+  # registers the adapter that delivers CertificationPassed facts to
+  # engagement's public consumer. Unwired = loud NotComposed refusal.
+  - "src/application/service/certification_port.rs"
+
+  # The outbound-fact sink (host-relayed mail/realtime legs): the trait,
+  # the tracing default, and the canned test double. The module sends no
+  # mail itself — participant invitations and session pushes stage through
+  # whatever sink the host composes.
+  - "src/application/service/event_sink.rs"
+
+  # Hand-written DB hardening: the attempt-state monotonic guard + the
+  # score-drift refusal triggers (both BEFORE UPDATE, firing on raw SQL),
+  # and the CHECK/partial-unique/index set the DSL cannot order.
+  - "migrations/*monotonic*"
+  - "migrations/*hardening*"
+  # The certification/session disjointness CHECK — the DB-side stamp of
+  # the arm-time typed refusal.
+  - "migrations/*certification_disjoint*"
+
+  # Hand-authored module documentation.
+  - "docs/**"
+  - "README.md"
+  - "SPEC.md"
+
+  # Hand-authored write/read paths (services orchestrate, repositories
+  # hold SQL — the family shape):
+  #   survey_write_service  — clamp guards, survey/question update verbs,
+  #                           session arm/advance/end, invite, regrade
+  #   intake_service        — begin/submit (the intake contract), the
+  #                           completion funnel with per-input isolation
+  #   scoring_service       — the speed-rating engine (pure), frozen
+  #                           denominator scoring, the sanctioned regrade
+  #   attempt_service       — Tier A mint/verify/rotate, Tier B session
+  #                           codes + lockout, attempt pool counting
+  #   session_read_service  — leaderboard, statistics, realtime access
+  - "src/application/service/survey_write_service.rs"
+  - "src/application/service/intake_service.rs"
+  - "src/application/service/scoring_service.rs"
+  - "src/application/service/attempt_service.rs"
+  - "src/application/service/session_read_service.rs"
+
+  # Hand-authored SQL holders.
+  - "src/infrastructure/persistence/survey_session_repository.rs"
+  - "src/infrastructure/persistence/attempt_repository.rs"
+  - "src/infrastructure/persistence/scoring_repository.rs"
+
+  # The public (bare capability mount, throttled) + guarded verb route
+  # family — ADR-0019 class 2 only.
+  - "src/presentation/http/public_routes.rs"
+
+  # The fail-hard probe suite (fresh scratch DB per test; a missing
+  # scratch Postgres panics the suite rather than skipping).
+  - "tests/**"

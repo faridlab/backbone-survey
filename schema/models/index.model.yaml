@@ -1,0 +1,151 @@
+# =============================================================================
+# survey Module - Schema Index
+# =============================================================================
+# Version: 2.0
+# Description: Module schema index. `module:` and `schema:` are stamped from
+# the module name at creation. `schema:` gives this module its OWN Postgres
+# schema (migrations emit `CREATE SCHEMA survey` and qualify tables as
+# `survey.<table>`) — the convention every backbone module follows (see
+# backbone-sapiens, backbone-mailing). Do not remove it.
+#
+# Enum types are created UNQUALIFIED in the `public` schema (the module
+# convention, ratified): `CREATE TYPE survey_input_state ...` with no schema
+# prefix, IF-NOT-EXISTS-guarded. All thirteen names were census-checked
+# against every module migration in the tree before landing (zero exact or
+# stem collisions; nearest neighbors session_status / pos_session_status /
+# mfa_session_status / impersonation_session_status are all distinct from
+# survey_session_state).
+# =============================================================================
+
+module: survey
+version: 2
+schema: survey
+description: "survey — the survey engine: survey/question composition (dual-natured questions + pages, conditional edges), token-gated attempts with the frozen scoring denominator, the live-session speed-rating engine with session codes and escalating lockout, and the fail-closed certification event port (Odoo survey port)"
+
+# ADR-0014 company fence: the Odoo survey stack ships NO company column and
+# zero ir.rules (posture 4 — single-tenant spec posture C2). Declaring
+# `none` emits no company RLS migration and synthesizes NO company_id
+# columns anywhere; synthesizing a fence would change behavior, not just
+# enforcement (do-not-synthesize). Tenant isolation (ADR-0006) remains the
+# only fence; security is the token-capability model + guarded route
+# compositions (participants never touch the ORM — zero portal/public
+# grants, world-deny posture preserved).
+company_fence: none
+
+config:
+  database: postgresql
+  soft_delete: true
+  audit: true
+  default_timestamps: true
+  generators:
+    disabled:
+      - graphql
+      - grpc
+      - proto
+
+# Reuse sapiens for user identity (actors, responsible officers, certified
+# takers) — logical refs, no DB constraint. party.Party is likewise a
+# logical ref (the invitation partner). Language allow-list rows are plain
+# uuids (no i18n module edge exists in-tree).
+external_imports:
+  - module: sapiens
+    types: [User]
+
+# Shared value-object types available to all models in this module.
+shared_types:
+  Timestamps:
+    created_at:
+      type: datetime
+      attributes: ["@default(now)"]
+      description: "Record creation timestamp"
+    updated_at:
+      type: datetime
+      attributes: ["@updated_at"]
+      description: "Last update timestamp"
+    deleted_at:
+      type: datetime?
+      description: "Soft delete timestamp"
+
+  Actors:
+    created_by:
+      type: uuid?
+      attributes: ["@foreign_key(sapiens.User.id)"]
+      description: "User who created this record"
+    updated_by:
+      type: uuid?
+      attributes: ["@foreign_key(sapiens.User.id)"]
+      description: "User who last updated this record"
+    deleted_by:
+      type: uuid?
+      attributes: ["@foreign_key(sapiens.User.id)"]
+      description: "User who deleted this record"
+
+  Metadata: [Timestamps, Actors]
+
+# Import each entity model (informational — discovery is a recursive glob,
+# but keeping the list accurate helps readers).
+imports:
+  - survey.model.yaml
+  - question.model.yaml
+  - user_input.model.yaml
+
+# =============================================================================
+# FLAG-ID COVERAGE — docs/odoo/marketing/survey port (this module closes):
+#
+# survey.survey          → Survey                       survey.model.yaml
+#                           (NO state field — `active` is the archive
+#                           functional; session_state is the ONLY selection
+#                           machine, hand-set, machine survey_session_state)
+# survey.question        → Question                     question.model.yaml
+#                           (dual-natured: is_page switches page/question;
+#                           ONE shared sequence space; page_id is the
+#                           write-maintained derivation SVM-8)
+# survey.question.answer → QuestionAnswer               question.model.yaml
+#                           (labels: choice answers / matrix columns / matrix
+#                           rows — the role XOR made DB-level)
+# survey.user_input      → UserInput                    user_input.model.yaml
+#                           (the attempt; machine survey_input_state +
+#                           DB-level monotonic trigger; Tier A token columns
+#                           ON the row; read_only over HTTP)
+# survey.user_input.line → UserInputLine                user_input.model.yaml
+#                           (the polymorphic answer line; score columns
+#                           immutable outside the sanctioned regrade verb;
+#                           read_only over HTTP)
+# survey.invite          → NOT a table: the typed `invite` verb + host-relayed
+#                           facts; existing_mode survives as the verb's enum
+#                           parameter (survey_invite_existing_mode).
+# Sessions               → NOT a separate entity (no survey.session model
+#                           exists upstream): the live-session runtime is
+#                           survey-carried (session_state/session_code/cursor/
+#                           clocks) + the realtime composition. A later seat
+#                           wanting a Session table must re-open SPEC.md.
+#
+# Join tables (first-class junction entities, the mailing subscription
+# precedent — the generator's m2m emission lands unqualified tables, so
+# schema-qualified junctions are declared as models):
+#   survey_survey_restrict_users       officer visibility allow-list
+#   survey_survey_langs                language allow-list (kept as data)
+#   survey_question_triggering_answers THE stored conditional edge (SVM-7)
+#   survey_user_input_predefined_questions  the FROZEN scoring denominator
+#
+# Hardening decided against the upstream behavior list:
+#   SV-B1 (naive now() deadline compare)  → every gate compares in UTC.
+#   SV-B2 (score recompute drift)         → answer_score/answer_is_correct/
+#          speed_seconds written once at submit; any later change (service
+#          OR raw SQL) hits a typed error / a BEFORE UPDATE trigger; the
+#          ONLY recompute is the guarded regrade_question verb working from
+#          the stored speed_seconds basis.
+#   SV-B3 (early-return clamp skip)       → no early-return write path; one
+#          update applies ALL clamps and propagations transactionally.
+#   SV-B4 (advance read-modify-write)     → FOR UPDATE / conditional UPDATE
+#          on the cursor; one push per advance.
+#   SV-B5 (test entries in KPI computes)  → KPI computes exclude test_entry
+#          rows (deliberate deviation, recorded).
+#   SV-B12 (silent code-generator death)  → SessionCodeExhausted typed error
+#          at 9 digits; generation grows 4→9 on collision, loudly.
+#
+# Out of scope by decision (SPEC.md records the dispositions): auth_signup
+# mid-survey URLs (token-gated API is the substitution), the certification
+# PDF renderer (webapp cert page + browser print), any portal/website
+# routing edge (zero Cargo edge onto backbone-portal or website hosts).
+# =============================================================================

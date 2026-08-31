@@ -1,0 +1,197 @@
+# =============================================================================
+# survey hooks — the write-path rules with enforcement loci (ADR-0015) and
+#   the lifecycle declarations for every entity.
+#
+# Spec of behavior: the typed verbs in the (later, hand-authored) write /
+# intake / scoring / attempt services under src/application/service/. The
+# machines are DECLARATIONS — the transition verbs are the only writers of
+# state.
+#
+# The attempt machine (ADR-0016 hand_set) lives in its own per-entity hook
+# file, where the schema validator resolves the field's `state_machine:` ref:
+#   survey_input_state.hook.yaml    UserInput.state (the attempt lifecycle)
+# Survey.session_state has NO machine file — the column is NULLABLE and the
+# generator's machine emission cannot express that; its declaration of
+# record is the comment block on the field in schema/models/survey.model.yaml
+# (NULL-boundary edges + the one declared edge), enforced by the arm/start/
+# end verbs. See the NOTE in index.hook.yaml.
+#
+# Lifecycle declarations (ADR-0016 — silence must not read "nobody decided"):
+#   hand_set machines: UserInput.state (survey_input_state, hook file),
+#                      Survey.session_state (declaration of record on the
+#                      field — nullable, no machine file; see above).
+#   lifecycle none:    Survey AS AN ENTITY has NO state field at all (SVM-1:
+#                      `active` is the archive boolean, enforced functionally
+#                      at the intake gate — declared here so lint catches any
+#                      smuggled status enum), Question, QuestionAnswer, the
+#                      four junction entities, UserInputLine (skipped is a
+#                      per-line marker, not a machine), and the stored
+#                      scoring aggregates (flags recomputed by the scoring
+#                      service, not state machines).
+#   inert enums:       Survey.progression_mode (webapp progress-bar hint —
+#                      declared so no port invents server-side semantics).
+# =============================================================================
+
+module: survey
+version: 2
+
+rules:
+
+  # ---- attempt state: monotonicity at the DB (the SVM-9 strengthening) ------
+
+  - id: R-SV1
+    name: attempt_state_monotonic
+    when: update user_input
+    assert: "state edges only advance new -> in_progress -> done. Service first line: state-guarded conditional UPDATEs (... WHERE id = $1 AND state = $expected; zero rows -> typed StateConflict). DB backstop: the hand *monotonic* migration's BEFORE UPDATE trigger raises survey_input_state_not_monotonic on ANY backward edge — covering raw SQL, the session-end bulk write, and batch tools (deliberate strengthening beyond Odoo's controller-only check)"
+    error_code: survey_input_state_not_monotonic
+    enforcement: both
+    # Why a trigger and not a partial UNIQUE: a partial unique expresses
+    # at-most-one-per-key (right for grant keys / live-token uniqueness),
+    # not a per-row directional transition; a CHECK cannot see the prior
+    # row. The trigger is the only DB-level shape that says "only advance".
+
+  - id: R-SV2
+    name: end_datetime_stamped_once
+    when: mark done
+    assert: "end_datetime is stamped ONLY on the -> done edge by the same conditional UPDATE that writes state — a double mark_done is a no-op refusal (zero rows), never a timestamp rewrite"
+    error_code: attempt_not_doneable
+    enforcement: service
+
+  # ---- the Tier A capability (ADR-0018; SVF's no-Oracle posture) -----------
+
+  - id: R-SV3
+    name: attempt_token_capability
+    when: begin, submit, next, certification read
+    assert: "authorization = the per-attempt capability: nonce selector + mandatory expiry + HMAC MAC over (id, nonce, grant, exp), constant-time compared; MULTI-use within the attempt until state = done or expiry. Unknown / expired / malformed / wrong-state answers share ONE refusal body (no enumeration oracle); expiry is a typed 410; the clock is UTC (SV-B1)"
+    error_code: attempt_not_submittable
+    enforcement: service
+    # service-only justification: the MAC is code over stored columns; no
+    # row-level CHECK can express "this MAC recomputes". The nonce's
+    # partial-UNIQUE among live rows (hardening migration) is the DB arm.
+
+  - id: R-SV4
+    name: token_rotation_atomic
+    when: rotate token, resend invitation
+    assert: "rotation mints a fresh nonce + expiry and kills the old one in ONE transaction — the old nonce dies atomically; there is never a window where both live"
+    error_code: rotation_conflict
+    enforcement: service
+
+  - id: R-SV5
+    name: nonce_unique_among_live
+    when: mint attempt, rotate
+    assert: "UNIQUE(token_nonce) among live rows — the hardening migration's partial UNIQUE (fires on raw SQL)"
+    error_code: duplicate_live_nonce
+    enforcement: db
+
+  # ---- the Tier B session code (SV-B12; the attendance lockout precedent) --
+
+  - id: R-SV6
+    name: session_code_exhaustion_loud
+    when: arm session
+    assert: "code generation grows 4 -> 9 digits on collision and FAILS LOUDLY at 9 (typed SessionCodeExhausted) — the upstream False-emitting generator does not port. Uniqueness is the partial UNIQUE among non-null rows (SV-S2)"
+    error_code: session_code_exhausted
+    enforcement: both
+
+  - id: R-SV7
+    name: session_code_lockout
+    when: code verify, join
+    assert: "per-identity AND per-IP counters: 3 consecutive failures -> 30 s lock, doubling per extra failure, 15 min cap, 1 s minimum spacing; success resets. Wrong code and unknown code share one answer (no oracle). Constants are named pub consts with a pure lockout_until()"
+    error_code: code_verify_locked
+    enforcement: service
+
+  # ---- scoring: the frozen denominator + the loud drift refusal -------------
+
+  - id: R-SV8
+    name: denominator_frozen
+    when: create input, score
+    assert: "the scoring service reads ONLY the input's predefined_question_ids snapshot (taken at create; random per section when selected); later survey edits NEVER change existing scores; mark_done prunes inactive conditional questions from the snapshot"
+    error_code: denominator_violation
+    enforcement: service
+    # service-only justification: "which rows the scorer reads" is code; the
+    # snapshot's existence is data (the junction table).
+
+  - id: R-SV9
+    name: score_drift_refused
+    when: update user_input_line
+    assert: "answer_score / answer_is_correct / speed_seconds are written ONCE at submit. Any later change to them on a graded line is refused: the typed SurveyWriteError::ScoreDriftRefused on the service path, and the hand *monotonic* migration's BEFORE UPDATE trigger raises survey_score_drift_refused on the raw-SQL path (outside the regrade marker). The ONLY sanctioned recompute is the guarded regrade_question verb, which works from the STORED speed_seconds and value columns — never a fresh now()"
+    error_code: survey_score_drift_refused
+    enforcement: both
+    # The SV-B2 "fixed loudly" mandate: never a silent overwrite, never a
+    # silent re-derivation.
+
+  - id: R-SV10
+    name: question_answer_score_nonnegative
+    when: create, update question
+    assert: "QUESTION-level answer_score >= 0 (SV-S10) — the ANSWER-level field deliberately allows negatives (penalty scoring)"
+    error_code: negative_question_score
+    enforcement: db
+    # The CHECK rides the hand hardening migration (the DSL cannot order it
+    # against the clamp cluster).
+
+  # ---- intake: the anti-cheat windows + the storage contract ----------------
+
+  - id: R-SV11
+    name: anti_cheat_windows
+    when: submit
+    assert: "attempt pre-creation precedes any submit (the row exists first — THE anti-cheat); _has_attempts_left is the pool self-join (same survey + done + not-test + shared-or-null invite_token + same partner-or-email) flushed in the caller's transaction; time limits compare in UTC with the +10 s survey / +3 s question graces against the STORED clocks"
+    error_code: attempt_not_allowed
+    enforcement: service
+
+  - id: R-SV12
+    name: intake_storage_contract
+    when: submit
+    assert: "scalar types UPSERT in place; choice and matrix DELETE-AND-RECREATE; an empty choice answer materializes a SKIPPED line; comments are ALWAYS char_box + value_char_box; save_as_email / save_as_nickname side-write the INPUT row; overwrite_existing is gated on users_can_go_back / save_as_* and refused loudly otherwise; inactive conditional answers are CLEARED (dependent lines deleted) at submit — scoring correctness over UX"
+    error_code: intake_contract_violation
+    enforcement: service
+
+  # ---- session: the advance lock + the bulk-done bypass fence ---------------
+
+  - id: R-SV13
+    name: session_advance_locked
+    when: session next
+    assert: "the advance verb takes SELECT ... FOR UPDATE on the survey row (or an equivalent conditional UPDATE on the cursor): exactly one cursor move, one clock stamp, one push per advance (SV-B4 fixed — the read-modify-write race is closed)"
+    error_code: advance_conflict
+    enforcement: service
+
+  - id: R-SV14
+    name: session_end_bulk_done_forward_only
+    when: session end
+    assert: "the end verb bulk-moves attendees to done via the monotonic-safe conditional UPDATE (forward-only — passes the guard by construction) and deliberately does NOT run the certification funnel (upstream TR-SV-7 kept). The bypass can never skip a certification: arm_session refuses certification-bearing surveys with the typed SessionCertificationConflict before any code is minted, and the survey_session_certification_disjoint CHECK stamps the same disjointness at the database (probe-asserted by p10b: refusal + control arm + CHECK 23514)"
+    error_code: session_end_conflict
+    enforcement: service
+
+  - id: R-SV15
+    name: question_delete_blocked_live
+    when: delete question
+    assert: "DELETE of a survey's questions is refused while session_state = 'in_progress' (SV-D1) — the hand hardening migration's BEFORE DELETE trigger fires on raw SQL too (a mid-session delete corrupts the running cursor)"
+    error_code: question_delete_refused_live_session
+    enforcement: both
+
+  # ---- certification: the publication gate -----------------------------------
+
+  - id: R-SV16
+    name: certification_publication_gate
+    when: mark done
+    assert: "publish iff certification AND certification_give_badge AND scoring_success AND user_id IS NOT NULL AND NOT test_entry — and ONLY on the FIRST successful completion in the attempt pool (producer-side once-per-user; SPEC.md §7.1). A NULL user_id at the gate is a config violation: the fact is NOT published, a typed audit record is written (survey_certification_grant_refused), and the funnel continues — never a silent drop"
+    error_code: certification_grant_refused
+    enforcement: service
+
+  - id: R-SV17
+    name: certification_port_fail_closed
+    when: certification publish
+    assert: "no CertificationGrantPort composed -> every certification completion fails LOUDLY with CertificationGrantError::NotComposed (audited, isolated per input) — never a silent no-grant. The publication runs POST-COMMIT of the mark_done transaction (a grant must never ride a rollback); redelivery safety is the consumer's grant_key"
+    error_code: certification_grant_not_composed
+    enforcement: service
+
+  - id: R-SV18
+    name: badge_key_globally_unique
+    when: create, update survey
+    assert: "UNIQUE(certification_badge_key) among non-null rows — one badge is the certification badge of at most one survey, ever (SV-S7, the _badge_uniq 1:1); fires on raw SQL via the hardening migration"
+    error_code: duplicate_certification_badge
+    enforcement: db
+
+triggers: []
+# (none at the ORM layer — upstream's create/write side-effect ladder does
+#  not port: the clamp cluster is write-path code, and the DB-level guards
+#  live in the hand *monotonic* / *hardening* migrations as triggers the
+#  schema DSL cannot express. See migrations/ and R-SV1/R-SV9/R-SV15.)

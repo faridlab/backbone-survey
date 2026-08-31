@@ -1,0 +1,390 @@
+# =============================================================================
+# survey — the flagship model (Odoo `survey.survey`) + its two cross-schema
+#   junction entities (officer visibility allow-list, language allow-list).
+#
+# PORT DECISIONS (source: docs/odoo/marketing/survey — cycle 9, SPEC.md §2.1):
+#  - NO state field: `active` IS the closed/archive switch, enforced
+#    functionally at the intake gate (SVM-1). Declared lifecycle-none for the
+#    entity in schema/hooks/survey.hook.yaml so lint catches any smuggled
+#    status enum.
+#  - session_state is the ONLY selection machine on this model — hand-set
+#    (ADR-0016 pattern 2) with NO machine file: the column is NULLABLE and
+#    the generator's machine emission cannot express that (declaration of
+#    record = the NOTE on the field below).
+#  - access_token is a PUBLIC uuid URL key, NOT a credential (SVF):
+#    participants are authorized by the per-attempt Tier A capability on
+#    survey_user_inputs (user_input.model.yaml), never by this token.
+#  - certification_badge_key replaces Odoo's certification_badge_id FK
+#    (recorded deviation): the badge's stable key in engagement, resolved by
+#    the host-composed CertificationGrantPort adapter. Partial-UNIQUE among
+#    non-null rows (one badge is the certification badge of at most one
+#    survey, ever — SV-S7); installed by the hand hardening migration.
+#  - The editable-compute cluster (SVM-2) ports as WRITE-PATH CLAMPS in the
+#    survey update verb, never as silent derivations: scoring_type,
+#    certification, certification_give_badge, is_attempts_limited,
+#    session_code generation, question_type, is_scored_question,
+#    save_as_email, save_as_nickname, validation_required, page_id.
+#  - The non-stored KPI/session computes (answer_count, success_ratio,
+#    ...) are the READ SERVICE — none are persisted (SVM-10). KPI computes
+#    exclude test_entry rows (SV-B5, deliberate). Certification/session
+#    disjointness is enforced at arm + by a DB CHECK, not by a read-side
+#    availability compute.
+# =============================================================================
+
+models:
+
+  - name: Survey
+    collection: survey_surveys
+    description: "Survey (Odoo `survey.survey`) — the composed questionnaire: dual-natured questions/pages, conditional edges, scoring configuration with the frozen-denominator snapshot per attempt, and (for live sessions) the survey-carried session runtime: hand-set session_state, human-typed session_code, the question cursor, and the speed-rating clocks. NO state field exists — `active` is the archive switch enforced at the intake gate; the certification seam is the stable badge key resolved through the fail-closed port."
+    fields:
+      id:
+        type: uuid
+        attributes: ["@id", "@default(uuid)"]
+        description: "Unique record id"
+
+      # ---- identity & content ------------------------------------------------
+      survey_type:
+        type: SurveySurveyType
+        attributes: ["@required", "@default(custom)"]
+        description: "Template STYLE, not a lifecycle (SVM-1): custom (the one general type that survives), or a live_session/assessment/survey preset shape. `active` is the only closed switch."
+      title:
+        type: string
+        attributes: ["@required", "@max(255)"]
+        description: "Survey title (the record's display name)."
+      description:
+        type: string?
+        description: "Intro message payload shown before the first page."
+      description_done:
+        type: string?
+        description: "Completion message payload shown at mark_done."
+      background_image:
+        type: string?
+        description: "Asset key of the background image — the bucket module owns binary storage; this column carries the reference only."
+      active:
+        type: boolean
+        attributes: ["@default(true)"]
+        description: "THE closed/archive switch (SVM-1) — there is no state column and no status enum. Enforced functionally at the intake gate: an inactive survey refuses new attempts. NOT a lifecycle field."
+      user_id:
+        type: uuid?
+        attributes: ["@exclude_from_foreign_key_check"]
+        description: "Responsible officer # logical FK sapiens.User.id (no DB constraint)."
+      access_token:
+        type: string
+        attributes: ["@required"]
+        description: "Public URL key — UNIQUE, minted uuid4 at create by the write path. PUBLIC INFRASTRUCTURE, NOT A CREDENTIAL (SVF): it addresses the survey; the per-attempt Tier A capability on the input row authorizes the taker."
+
+      # ---- layout & selection -------------------------------------------------
+      questions_layout:
+        type: SurveyQuestionsLayout
+        attributes: ["@required", "@default(page_per_question)"]
+        description: "Rendering layout. The session arm verb FORCES page_per_question (one question per attendee screen — the live-session contract); the field stays officer-editable for non-session surveys."
+      questions_selection:
+        type: SurveyQuestionsSelection
+        attributes: ["@required", "@default(all)"]
+        description: "all = every scored question enters the frozen denominator; random = per-section sampling at input create (SVM-7: random IGNORES conditionals — a conditional question sampled without its trigger still scores its unconditional form)."
+      progression_mode:
+        type: SurveyProgressionMode
+        attributes: ["@default(percent)"]
+        description: "Progress-bar arithmetic hint for the webapp (percent of pages vs page number) — kept as data; no server-side consumer."
+
+      # ---- access & anti-cheat -------------------------------------------------
+      access_mode:
+        type: SurveyAccessMode
+        attributes: ["@required", "@default(public)"]
+        description: "public = anyone with the survey link may start an attempt (within attempts-left); token = an invitation is required (the intake gate refuses walk-ins). Odoo's dead `authentication`/`internal` branches do NOT port."
+      users_login_required:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "When true, attempts require an authenticated session and stamp user_id — the certification guard below is clamped on exactly this flag."
+      users_can_go_back:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Roaming toggle — load-bearing intake semantics: a mandatory-empty answer errors ONLY when NOT roaming; overwrite_existing answers is gated on this plus the save_as_* side-writes."
+      is_attempts_limited:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Attempts-limit toggle — CLAMPED true when the survey has conditional questions or login-required token access (SVM-2 clamp cluster)."
+      attempts_limit:
+        type: integer
+        attributes: ["@default(1)"]
+        description: "Max attempts per participant pool. CHECK positive-when-limited rides the hardening migration (SV-S6)."
+      is_time_limited:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Survey-wide time-limit toggle — enforced server-side at intake against the attempt deadline with the +10 s grace."
+      time_limit:
+        type: float
+        attributes: ["@default(10.0)"]
+        description: "Survey time limit in MINUTES. CHECK positive-when-limited rides the hardening migration (SV-S5)."
+
+      # ---- scoring & certification ---------------------------------------------
+      scoring_type:
+        type: SurveyScoringType
+        attributes: ["@required", "@default(no_scoring)"]
+        description: "no_scoring | scoring_with_answers_after_page | scoring_with_answers | scoring_without_answers — the reveal schedule AND the scoring gate. CLAMPED (SVM-2): certification forces scoring_without_answers; no_scoring forces certification = false."
+      scoring_success_min:
+        type: float
+        attributes: ["@default(80.0)"]
+        description: "Success threshold in percent. CHECK 0 <= x <= 100 rides the hardening migration (SV-S4)."
+      certification:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Certification gate — CLAMPED interlocked with scoring_type (certification => scoring_type <> no_scoring, both directions covered by the clamp; SV-S3)."
+      certification_mail_template_id:
+        type: uuid?
+        attributes: ["@exclude_from_foreign_key_check"]
+        description: "Completion-mail template # logical ref messaging.MailTemplate — config only; sending is host-relayed through the event sink (the module sends no mail itself)."
+      certification_report_layout:
+        type: SurveyReportLayout
+        attributes: ["@default(modern_purple)"]
+        description: "Style selector for the webapp certification page (SPEC.md disposition: the PDF renderer does not port; the token-gated cert page consumes this)."
+      certification_give_badge:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "CLAMPED true iff users_login_required AND certification (SVM-2) — the publication gate's badge arm."
+      certification_badge_key:
+        type: string?
+        attributes: ["@max(120)"]
+        description: "RECORDED DEVIATION: replaces Odoo's certification_badge_id FK. The badge's STABLE KEY in engagement, resolved by the host-composed CertificationGrantPort adapter (zero Cargo edge, zero cross-schema FK). Partial-UNIQUE among non-null rows — one badge is the certification badge of at most one survey, ever (SV-S7, the _badge_uniq global 1:1); installed by the hardening migration. A typo'd key is caught at publication time by the audited refusal, not by an FK."
+
+      # ---- the live-session runtime (survey-carried; no Session entity) --------
+      session_state:
+        type: SurveySessionState?
+        lifecycle:
+          shape: hand_set
+          # NOTE: no `state_machine:` ref and no machine hook file —
+          # deliberate, recorded. DECLARATION OF RECORD for the machine
+          # `survey_session_state` (this block): values ready / in_progress;
+          # NULL-boundary edges arm: NULL -> ready (forces
+          # page_per_question, mints the session_code) and
+          # end: {ready|in_progress} -> NULL (bulk-done forward-only,
+          # invalidate the code); declared edge start: ready -> in_progress
+          # (the lazy open on the first advance, stamps
+          # session_start_time). The arm/start/end verbs enforce all of it.
+          # WHY no machine file: the generator's transition emission assumes
+          # a NON-nullable state field (Display/FromStr directly on the
+          # field type — does not compile for Option<SurveySessionState>;
+          # it broke at entity transition_to and the handler's start
+          # endpoint). Restore the machine file when the generator grows
+          # nullable-state support.
+          display_labels:
+            ready: "Ready"
+            in_progress: "In Progress"
+        description: "THE only selection machine on this model — HAND-SET (ADR-0016 pattern 2; machine declaration of record on the field). NULL = not armed or ended; ready = armed (arm verb forces page_per_question); in_progress = live (lazy open on first advance). The end verb writes NULL back. NO canceled-style extra values are invented."
+      session_code:
+        type: string?
+        attributes: ["@max(16)"]
+        description: "Tier B human-typed join key for /survey/s/:code — minted by the arm verb, grown 4->9 digits on collision, EXHAUSTION AT 9 FAILS LOUDLY (SessionCodeExhausted; SV-B12 fixed — the upstream False-emitting generator does not port). Partial-UNIQUE among non-null rows (SV-S2, hardening migration). Valid only while session_state IS NOT NULL; a hard TTL (24 h after arm) and the end verb invalidate."
+      session_question_id:
+        type: uuid?
+        attributes: ["@exclude_from_foreign_key_check"]
+        description: "THE session cursor — logical ref Question.id. Advanced by the session/next verb under FOR UPDATE (SV-B4 fixed: the read-modify-write race is closed); NULL while not in_progress."
+      session_start_time:
+        type: datetime?
+        description: "Leaderboard window lower bound — stamped at lazy open."
+      session_question_start_time:
+        type: datetime?
+        description: "Speed-rating clock — written now() + 1 s by the advance verb while the pushed realtime payload carries the PRE-write millis (SVM-11; deliberate attendee-favoring skew, kept)."
+      session_speed_rating:
+        type: boolean
+        attributes: ["@default(false)"]
+        description: "Speed-rating gate. CHECK on => positive session_speed_rating_time_limit rides the hardening migration (SV-S8)."
+      session_speed_rating_time_limit:
+        type: integer?
+        description: "Seconds for full speed points — PROPAGATED to questions by the update verb (deliberately NOT derived per question: circular)."
+
+      metadata:
+        type: Metadata
+        attributes: ["@audit_metadata"]
+        description: "Audit metadata"
+
+    indexes:
+      - type: unique
+        fields: [access_token]
+        description: "The public URL key — uniqueness among all rows (a revoked survey keeps its key; the intake gate is the switch)"
+      - type: unique
+        fields: [session_code]
+        where: "session_code IS NOT NULL"
+        description: "Tier B join-key uniqueness among armed/live sessions (SV-S2)"
+      - type: unique
+        fields: [certification_badge_key]
+        where: "certification_badge_key IS NOT NULL"
+        description: "The badge 1:1 — one badge key is the certification badge of at most one survey, ever (SV-S7)"
+      - type: index
+        fields: [active, survey_type]
+        description: "The officer list filter arm"
+
+  # ===========================================================================
+  # survey_survey_restrict_users — officer visibility allow-list (logical m2m
+  # sapiens.User). A first-class junction entity (the mailing subscription
+  # precedent): the generator's m2m emission lands UNQUALIFIED tables, and a
+  # cross-schema FK onto sapiens users is not expressible — so the junction
+  # is a plain model with logical uuid refs and survey-schema residency.
+  # ===========================================================================
+  - name: SurveySurveyRestrictUser
+    collection: survey_survey_restrict_users
+    description: "Officer visibility allow-list row (Odoo survey.survey restrict_user_ids m2m) — when a survey has rows here, only these officers see it. user_id is a logical ref (no FK); the pair is unique among live rows."
+    fields:
+      id:
+        type: uuid
+        attributes: ["@id", "@default(uuid)"]
+        description: "Unique record id"
+      survey_id:
+        type: uuid
+        attributes: ["@foreign_key(Survey.survey_surveys)", "@indexed"]
+        description: "The restricted survey (relation-driven FK, ON DELETE CASCADE)."
+      user_id:
+        type: uuid
+        attributes: ["@exclude_from_foreign_key_check"]
+        description: "The allowed officer # logical ref sapiens.User.id (no DB constraint)."
+      metadata:
+        type: Metadata
+        attributes: ["@audit_metadata"]
+        description: "Audit metadata"
+
+    relations:
+      survey:
+        type: Survey
+        attributes: ["@one", "@foreign_key(survey_id)", "@on_delete(cascade)"]
+        description: "The restricted survey (real FK survey.survey_survey_restrict_users.survey_id -> survey.survey_surveys, cascade)"
+
+    indexes:
+      - type: unique
+        fields: [survey_id, user_id]
+        description: "Allow-list membership is a set — the pair is unique among live rows"
+
+  # ===========================================================================
+  # survey_survey_langs — the survey's language allow-list, kept as data for
+  # the webapp (language forcing is the substituted webapp concern; SPEC.md
+  # records the disposition). No i18n module edge exists in-tree: rows are
+  # plain logical uuid refs.
+  # ===========================================================================
+  - name: SurveySurveyLang
+    collection: survey_survey_langs
+    description: "Survey language allow-list row (Odoo survey.survey lang_ids m2m res.lang) — kept as data; the webapp owns rendering-language forcing. lang_id is a logical ref (no FK, no i18n edge)."
+    fields:
+      id:
+        type: uuid
+        attributes: ["@id", "@default(uuid)"]
+        description: "Unique record id"
+      survey_id:
+        type: uuid
+        attributes: ["@foreign_key(Survey.survey_surveys)", "@indexed"]
+        description: "The survey (relation-driven FK, ON DELETE CASCADE)."
+      lang_id:
+        type: uuid
+        attributes: ["@exclude_from_foreign_key_check"]
+        description: "The allowed language # logical ref to the (host-side) language master. The module never interprets it."
+      metadata:
+        type: Metadata
+        attributes: ["@audit_metadata"]
+        description: "Audit metadata"
+
+    relations:
+      survey:
+        type: Survey
+        attributes: ["@one", "@foreign_key(survey_id)", "@on_delete(cascade)"]
+        description: "The survey (real FK survey.survey_survey_langs.survey_id -> survey.survey_surveys, cascade)"
+
+    indexes:
+      - type: unique
+        fields: [survey_id, lang_id]
+        description: "Language membership is a set — the pair is unique among live rows"
+
+# =============================================================================
+# Enums (survey)
+# =============================================================================
+
+enums:
+  - name: SurveySurveyType
+    description: "Template STYLE, never a lifecycle (SVM-1) — `active` is the closed switch; the values shape defaults only"
+    variants:
+      - name: survey
+        description: "Classic scored survey shape"
+      - name: live_session
+        description: "Live-session shape (session runtime + speed rating apply)"
+      - name: assessment
+        description: "Assessment shape (certification-leaning defaults)"
+      - name: custom
+        description: "The general type — the only one that imposes no preset"
+        default: true
+
+  - name: SurveyAccessMode
+    description: "Who may START an attempt — the intake gate's walk-in arm (Odoo's dead authentication/internal branches do not port)"
+    variants:
+      - name: public
+        description: "Anyone holding the survey link may start (within attempts-left)"
+        default: true
+      - name: token
+        description: "An invitation is required — walk-ins are refused at the intake gate"
+
+  - name: SurveyScoringType
+    description: "The reveal schedule AND scoring gate in one selection (SVM-2 clamp cluster: certification forces scoring_without_answers; no_scoring forces certification=false)"
+    variants:
+      - name: no_scoring
+        description: "No scoring at all"
+        default: true
+      - name: scoring_with_answers_after_page
+        description: "Score + reveal answers after each page"
+      - name: scoring_with_answers
+        description: "Score + reveal answers at the end"
+      - name: scoring_without_answers
+        description: "Score at the end, answers never revealed (the certification shape)"
+
+  - name: SurveySessionState
+    description: "THE live-session selection machine — hand-set only (ADR-0016 pattern 2); the COLUMN is NULL before arming and after the end verb (NULL = not armed / ended), and carries no field-level default. NO canceled-style values (declaration of record on the field)"
+    variants:
+      - name: ready
+        description: "Armed — session_code minted, attendees may join; layout forced page_per_question"
+        default: true
+      - name: in_progress
+        description: "Live — cursor advancing under FOR UPDATE; leaderboard window open"
+
+  - name: SurveyQuestionsLayout
+    description: "Rendering layout — the arm verb forces page_per_question for live sessions; officer-editable otherwise"
+    variants:
+      - name: page_per_question
+        description: "One question per screen (the live-session contract)"
+        default: true
+      - name: page_per_section
+        description: "One page per section (page row) per screen"
+      - name: one_page
+        description: "Everything on one screen"
+
+  - name: SurveyQuestionsSelection
+    description: "Which scored questions enter the frozen denominator — random IGNORES conditionals (SVM-7): a sampled conditional without its trigger scores its unconditional form"
+    variants:
+      - name: all
+        description: "Every scored question (conditional pruning happens at mark_done)"
+        default: true
+      - name: random
+        description: "Per-section random_questions_count sampling at input create"
+
+  - name: SurveyReportLayout
+    description: "Certification-page style selector (the webapp's concern — SPEC.md's recorded PDF disposition)"
+    variants:
+      - name: modern_purple
+        default: true
+      - name: modern_blue
+      - name: modern_gold
+      - name: classic_purple
+      - name: classic_blue
+      - name: classic_gold
+
+  - name: SurveyProgressionMode
+    description: "Progress-bar arithmetic hint for the webapp (kept as data; no server-side consumer)"
+    variants:
+      - name: percent
+        description: "Progress as a percentage of pages"
+        default: true
+      - name: number
+        description: "Progress as a page counter"
+
+  - name: SurveyInviteExistingMode
+    description: "The typed invite verb's existing-participant parameter (survey.invite is NOT a table — SPEC.md records the verb substitution; existing_mode survives here)"
+    variants:
+      - name: new
+        description: "Invite only participants without an attempt yet"
+        default: true
+      - name: resend
+        description: "Re-invite existing participants — mints a fresh attempt (same invite_token pool) with a rotated Tier A nonce"

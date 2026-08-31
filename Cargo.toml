@@ -1,0 +1,90 @@
+[package]
+name = "backbone-survey"
+version = "0.1.0"
+edition = "2021"
+description = "Surveys & live sessions — survey/question composition, token-gated attempts with the frozen scoring denominator, the speed-rating engine, session codes with lockout, and the certification event contract (Odoo survey port)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# -----------------------------------------------------------------------------
+# Backbone Framework crates
+#
+# Pulled directly from the public framework repository so this module works
+# anywhere on disk without path fix-up. Pinned to the framework tag current
+# at module creation. Cargo dedupes the git fetch — the repo is only cloned
+# once even though several crates reference it.
+# -----------------------------------------------------------------------------
+backbone-core = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.11", features = ["postgres"] }
+backbone-orm = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.11" }
+backbone-auth = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.11" }
+backbone-messaging = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.11" }
+# The public attempt/session route family is throttled at middleware
+# (ADR-0019 bare-capability mounts, the engagement /r/:code precedent).
+backbone-rate-limit = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.11" }
+
+# Sibling modules: NONE by design. The certification seam (badge granting)
+# is a fail-closed port trait the composing host wires to engagement's
+# public event consumer; the realtime seam is a host-composed sink; the
+# invitation relay is the host's mail composition. Badges are referenced
+# only by their stable key string — no Cargo edge, no DB FK, no schema
+# boundary crossing from this crate.
+
+# Core async runtime and serialization
+tokio = { version = "1.0", features = ["full"] }
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Database (PostgreSQL primary)
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "migrate"] }
+
+# HTTP framework (Axum)
+axum = { version = "0.7", features = ["macros"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Validation
+validator = { version = "0.16", features = ["derive"] }
+
+# Per-attempt capability tokens (ADR-0018): the Tier A nonce selector + the
+# HMAC-SHA256 MAC over (id, nonce, grant, exp), plus session-code and nonce
+# minting — the module's only crypto surface.
+hmac = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Configuration
+config = "0.14"
+serde_yaml = "0.9"
+
+[features]
+default = []
+events = []
+auth = []
+grpc = []
+openapi = []
+validation = []
+
+[dev-dependencies]
+tempfile = "3.0"
+tokio-test = "0.4"
+mockall = "0.12"
+pretty_assertions = "1.0"
+
+# Integration testing framework — the generated tests/integration_tests.rs hits
+# a live server via reqwest; public-route probes hit the router in-process via
+# tower's ServiceExt::oneshot.
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+jsonwebtoken = "9.3"

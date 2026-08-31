@@ -1,0 +1,43 @@
+# =============================================================================
+# survey_input_state — UserInput.state (machine #1; ADR-0016 hand_set).
+#   Split into its own per-entity hook file because the validator resolves a
+#   field's `state_machine:` ref against per-entity hook names.
+#
+# HAND-SET lifecycle: begin / mark_done are typed verbs; the session-end
+#   bulk-done moves the SAME edge THROUGH a monotonic-safe conditional
+#   UPDATE, never via raw state writes. THE DB-LEVEL MONOTONIC GUARD (the
+#   hand *monotonic* migration's BEFORE UPDATE trigger) backstops every
+#   path — including raw SQL — by refusing any backward edge (SVM-9's
+#   deliberate strengthening beyond Odoo's controller-only check).
+#
+# Exactly three values. NO skipped (skipping is per-LINE — the skipped
+#   marker on survey_user_input_lines). NO label inversion (the machine
+#   value IS the contract; display labels live on the field's
+#   display_labels map).
+# =============================================================================
+
+name: survey_input_state
+model: UserInput
+
+states:
+  field: state
+  values:
+    new:
+      initial: true
+    in_progress:
+      {}
+    done:
+      final: true   # terminal — the re-entry guard refuses further submits
+  transitions:
+    begin:
+      from: new
+      to: in_progress
+      message: "Attempt begun — stamps start_datetime; returns the first page/question payload. Attendees of a live session (session_state = in_progress) may be created DIRECTLY in in_progress (T0): the join verb's pre-created row enters here without passing new."
+    mark_done:
+      from: in_progress
+      to: done
+      message: "The completion funnel's terminal edge — ONE conditional UPDATE (WHERE state = 'in_progress') stamps state + end_datetime together; zero rows = typed no-op refusal (never a timestamp rewrite). Then, post-commit: the host-relayed completion fact, the certification leg (first-pool-success publication through the fail-closed port), and the snapshot prune. Per-input error isolation: a failure on input N is recorded (typed, audited) and the batch continues."
+    session_bulk_done:
+      from: in_progress
+      to: done
+      message: "The session-end verb's bulk edge — the SAME conditional UPDATE shape applied per attendee (forward-only: passes the monotonic trigger by construction). Deliberately does NOT run the certification funnel (upstream TR-SV-7 kept); the two regimes are kept disjoint at arm (typed SessionCertificationConflict) and by the survey_session_certification_disjoint CHECK (a certification survey cannot run a live session)."
