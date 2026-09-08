@@ -1,6 +1,6 @@
 [package]
 name = "backbone-survey"
-version = "0.1.1"
+version = "0.1.3"
 edition = "2021"
 description = "Surveys & live sessions — survey/question composition, token-gated attempts with the frozen scoring denominator, the speed-rating engine, session codes with lockout, and the certification event contract (Odoo survey port)"
 
@@ -16,13 +16,13 @@ path = "src/lib.rs"
 # at module creation. Cargo dedupes the git fetch — the repo is only cloned
 # once even though several crates reference it.
 # -----------------------------------------------------------------------------
-backbone-core = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.16", features = ["postgres"] }
-backbone-orm = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.16" }
-backbone-auth = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.16" }
-backbone-messaging = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.16" }
+backbone-core = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.17", features = ["postgres"] }
+backbone-orm = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.17" }
+backbone-auth = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.17" }
+backbone-messaging = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.17" }
 # The public attempt/session route family is throttled at middleware
 # (ADR-0019 bare-capability mounts, the engagement /r/:code precedent).
-backbone-rate-limit = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.16" }
+backbone-rate-limit = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.17" }
 
 # Sibling modules: NONE by design. The certification seam (badge granting)
 # is a fail-closed port trait the composing host wires to engagement's
