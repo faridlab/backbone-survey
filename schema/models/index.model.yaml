@@ -22,15 +22,14 @@ version: 2
 schema: survey
 description: "survey — the survey engine: survey/question composition (dual-natured questions + pages, conditional edges), token-gated attempts with the frozen scoring denominator, the live-session speed-rating engine with session codes and escalating lockout, and the fail-closed certification event port (Odoo survey port)"
 
-# ADR-0014 company fence: the Odoo survey stack ships NO company column and
-# zero ir.rules (posture 4 — single-tenant spec posture C2). Declaring
-# `none` emits no company RLS migration and synthesizes NO company_id
-# columns anywhere; synthesizing a fence would change behavior, not just
-# enforcement (do-not-synthesize). Tenant isolation (ADR-0006) remains the
-# only fence; security is the token-capability model + guarded route
-# compositions (participants never touch the ORM — zero portal/public
+# Company fence: none by design (ADR-0014 posture 4 — the Odoo survey stack
+# ships no company column and zero ir.rules; single-tenant spec posture C2).
+# The module is tenant-agnostic (ADR-0029): no company RLS is emitted and no
+# company_id columns are synthesized anywhere — a fence would change behavior,
+# not just enforcement (do-not-synthesize). Tenant isolation (ADR-0006)
+# remains the only fence; security is the token-capability model + guarded
+# route compositions (participants never touch the ORM — zero portal/public
 # grants, world-deny posture preserved).
-company_fence: none
 
 config:
   database: postgresql

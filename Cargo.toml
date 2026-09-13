@@ -1,6 +1,6 @@
 [package]
 name = "backbone-survey"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Surveys & live sessions — survey/question composition, token-gated attempts with the frozen scoring denominator, the speed-rating engine, session codes with lockout, and the certification event contract (Odoo survey port)"
 
