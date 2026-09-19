@@ -56,6 +56,7 @@ rules:
     assert: "end_datetime is stamped ONLY on the -> done edge by the same conditional UPDATE that writes state — a double mark_done is a no-op refusal (zero rows), never a timestamp rewrite"
     error_code: attempt_not_doneable
     enforcement: service
+    justification: "One conditional UPDATE writes the state and the stamp together, and a repeat arrives as zero rows rather than as a rewritten timestamp. Splitting that into a guard means reading before writing, which is the race the single statement removes."
 
   # ---- the Tier A capability (ADR-0018; SVF's no-Oracle posture) -----------
 
@@ -65,6 +66,7 @@ rules:
     assert: "authorization = the per-attempt capability: nonce selector + mandatory expiry + HMAC MAC over (id, nonce, grant, exp), constant-time compared; MULTI-use within the attempt until state = done or expiry. Unknown / expired / malformed / wrong-state answers share ONE refusal body (no enumeration oracle); expiry is a typed 410; the clock is UTC (SV-B1)"
     error_code: attempt_not_submittable
     enforcement: service
+    justification: "A capability is verified by recomputing an HMAC over the request in constant time against a nonce and an expiry. There is no stored secret to constrain, and comparing in constant time is a property of the code doing the comparison."
     # service-only justification: the MAC is code over stored columns; no
     # row-level CHECK can express "this MAC recomputes". The nonce's
     # partial-UNIQUE among live rows (hardening migration) is the DB arm.
@@ -75,6 +77,7 @@ rules:
     assert: "rotation mints a fresh nonce + expiry and kills the old one in ONE transaction — the old nonce dies atomically; there is never a window where both live"
     error_code: rotation_conflict
     enforcement: service
+    justification: "The guarantee is that the old nonce dies in the same transaction the new one is born in, so no window exists where both are valid. That is a statement about a transaction boundary, not about any row's contents."
 
   - id: R-SV5
     name: nonce_unique_among_live
@@ -98,6 +101,7 @@ rules:
     assert: "per-identity AND per-IP counters: 3 consecutive failures -> 30 s lock, doubling per extra failure, 15 min cap, 1 s minimum spacing; success resets. Wrong code and unknown code share one answer (no oracle). Constants are named pub consts with a pure lockout_until()"
     error_code: code_verify_locked
     enforcement: service
+    justification: "Rate limiting over per-identity and per-IP counters with a doubling backoff. The inputs are request facts that never reach a row, and the shared refusal for wrong and unknown codes exists so the response cannot be used as an oracle."
 
   # ---- scoring: the frozen denominator + the loud drift refusal -------------
 
@@ -107,6 +111,7 @@ rules:
     assert: "the scoring service reads ONLY the input's predefined_question_ids snapshot (taken at create; random per section when selected); later survey edits NEVER change existing scores; mark_done prunes inactive conditional questions from the snapshot"
     error_code: denominator_violation
     enforcement: service
+    justification: "Scoring reads the question snapshot taken when the attempt was created, so later edits to the survey cannot move an existing score. Freezing the denominator is about which set the scorer reads, not about what any row may contain."
     # service-only justification: "which rows the scorer reads" is code; the
     # snapshot's existence is data (the junction table).
 
@@ -136,6 +141,7 @@ rules:
     assert: "attempt pre-creation precedes any submit (the row exists first — THE anti-cheat); _has_attempts_left is the pool self-join (same survey + done + not-test + shared-or-null invite_token + same partner-or-email) flushed in the caller's transaction; time limits compare in UTC with the +10 s survey / +3 s question graces against the STORED clocks"
     error_code: attempt_not_allowed
     enforcement: service
+    justification: "The pool check is a self-join over the attempt history, taken before a submit is allowed to exist. It is an aggregate over other rows, and the ordering (the attempt row first, then anything else) is what makes it an anti-cheat rather than a tally."
 
   - id: R-SV12
     name: intake_storage_contract
@@ -143,6 +149,7 @@ rules:
     assert: "scalar types UPSERT in place; choice and matrix DELETE-AND-RECREATE; an empty choice answer materializes a SKIPPED line; comments are ALWAYS char_box + value_char_box; save_as_email / save_as_nickname side-write the INPUT row; overwrite_existing is gated on users_can_go_back / save_as_* and refused loudly otherwise; inactive conditional answers are CLEARED (dependent lines deleted) at submit — scoring correctness over UX"
     error_code: intake_contract_violation
     enforcement: service
+    justification: "Different answer types are stored by different strategies, one upserting in place and another deleting and recreating, with a skipped line materialised for an empty choice. That is a write-path contract; a constraint can only see the rows each strategy leaves behind."
 
   # ---- session: the advance lock + the bulk-done bypass fence ---------------
 
@@ -152,6 +159,7 @@ rules:
     assert: "the advance verb takes SELECT ... FOR UPDATE on the survey row (or an equivalent conditional UPDATE on the cursor): exactly one cursor move, one clock stamp, one push per advance (SV-B4 fixed — the read-modify-write race is closed)"
     error_code: advance_conflict
     enforcement: service
+    justification: "The lock is what makes the advance exactly one cursor move, one clock stamp and one push. Holding it is the verb's job, and a constraint on the cursor row could not tell a legitimate advance from a duplicated one."
 
   - id: R-SV14
     name: session_end_bulk_done_forward_only
@@ -159,6 +167,7 @@ rules:
     assert: "the end verb bulk-moves attendees to done via the monotonic-safe conditional UPDATE (forward-only — passes the guard by construction) and deliberately does NOT run the certification funnel (upstream TR-SV-7 kept). The bypass can never skip a certification: arm_session refuses certification-bearing surveys with the typed SessionCertificationConflict before any code is minted, and the survey_session_certification_disjoint CHECK stamps the same disjointness at the database (probe-asserted by p10b: refusal + control arm + CHECK 23514)"
     error_code: session_end_conflict
     enforcement: service
+    justification: "The end verb moves attendees forward in bulk and deliberately does not run the certification pass. Both halves are decisions about what this verb does, which is not something a row can carry."
 
   - id: R-SV15
     name: question_delete_blocked_live
@@ -175,6 +184,7 @@ rules:
     assert: "publish iff certification AND certification_give_badge AND scoring_success AND user_id IS NOT NULL AND NOT test_entry — and ONLY on the FIRST successful completion in the attempt pool (producer-side once-per-user; SPEC.md §7.1). A NULL user_id at the gate is a config violation: the fact is NOT published, a typed audit record is written (survey_certification_grant_refused), and the funnel continues — never a silent drop"
     error_code: certification_grant_refused
     enforcement: service
+    justification: "The gate reads five conditions across the input and its attempt pool, including that this is the first successful completion. A CHECK sees one row and cannot know whether an earlier attempt already published."
 
   - id: R-SV17
     name: certification_port_fail_closed
@@ -182,6 +192,7 @@ rules:
     assert: "no CertificationGrantPort composed -> every certification completion fails LOUDLY with CertificationGrantError::NotComposed (audited, isolated per input) — never a silent no-grant. The publication runs POST-COMMIT of the mark_done transaction (a grant must never ride a rollback); redelivery safety is the consumer's grant_key"
     error_code: certification_grant_not_composed
     enforcement: service
+    justification: "With no grant port composed, every completion must fail loudly and be audited rather than pass silently. That is a composition posture, and a database has no notion of a port that was never wired."
 
   - id: R-SV18
     name: badge_key_globally_unique
