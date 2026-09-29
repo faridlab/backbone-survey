@@ -124,9 +124,12 @@ pub struct JoinBody {
     /// The attendee's self-declared identity (the Tier B per-identity
     /// lockout grain).
     pub identity: String,
-    /// The host-minted realtime handle stamped on the attempt (the
-    /// resolver's key).
-    pub wire_identity_key: String,
+    /// Deprecated and IGNORED: the realtime handle is derived SERVER-SIDE
+    /// (a keyed digest of code + identity under the module secret), so a
+    /// client cannot self-declare an arbitrary handle. The field stays
+    /// tolerated in the body for older clients; any value it carries is
+    /// overwritten by the derived one.
+    pub wire_identity_key: Option<String>,
     pub nickname: Option<String>,
 }
 
@@ -146,7 +149,6 @@ async fn join_session(
             &code,
             &body.identity,
             &ip,
-            &body.wire_identity_key,
             body.nickname.as_deref(),
         )
         .await

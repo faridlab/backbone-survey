@@ -347,7 +347,7 @@ async fn p16_anti_cheat_windows() {
     let code = armed.session_code.clone().expect("code");
     let ticket = svc
         .attempts
-        .join_by_code(&code, "wanda", "10.0.0.7", "wire-wanda", Some("wanda"))
+        .join_by_code(&code, "wanda", "10.0.0.7", Some("wanda"))
         .await
         .expect("join");
     let slink = ticket.link.clone();

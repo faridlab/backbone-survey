@@ -111,6 +111,26 @@ pub fn parse_capability(link: &str) -> Option<ParsedCapability> {
     Some(ParsedCapability { id, nonce, exp, mac })
 }
 
+/// Derive the realtime wire-identity handle SERVER-SIDE: a keyed digest
+/// of the session code and the Tier B identity under the module secret.
+/// Deterministic per attendee (the same join re-derives the same handle,
+/// so the resolver's channel keying stays stable) and unforgeable without
+/// the secret — a client can no longer self-declare an arbitrary handle,
+/// the body field is dead weight the verb ignores.
+fn derive_wire_identity_key(secret: &[u8], code: &str, identity: &str) -> String {
+    use sha2::Sha256;
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret)
+        .expect("HMAC accepts any key length");
+    mac.update(format!("survey-wire|{code}|{identity}").as_bytes());
+    let tag = mac.finalize().into_bytes();
+    hex(&tag[..16])
+}
+
+/// Lowercase hex of a byte slice (32 hex chars for 16 bytes).
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 fn mint_nonce() -> String {
     let mut bytes = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut bytes);
@@ -300,6 +320,14 @@ impl AttemptService {
     // ── Tier A ────────────────────────────────────────────────────────────────
 
     /// Render the public capability link for an input.
+    /// The wire-identity handle a join WOULD derive for (code, identity)
+    /// under this service's secret — the test surface for the resolver
+    /// rule: probes assert the resolver answers for exactly this handle,
+    /// never a client-declared one.
+    pub fn wire_identity_handle_for(&self, code: &str, identity: &str) -> Result<String, SurveyWriteError> {
+        Ok(derive_wire_identity_key(self.require_secret()?, code, identity))
+    }
+
     pub fn mint_capability(&self, input: &UserInput) -> Result<String, SurveyWriteError> {
         let secret = self.require_secret()?;
         let exp = input.token_expires_at.timestamp();
@@ -519,7 +547,6 @@ impl AttemptService {
         code: &str,
         identity: &str,
         ip: &str,
-        wire_identity_key: &str,
         nickname: Option<&str>,
     ) -> Result<AttemptTicket, SurveyWriteError> {
         let _ = self.require_secret()?;
@@ -569,7 +596,7 @@ impl AttemptService {
                 None,
                 nickname,
                 None,
-                Some(wire_identity_key),
+                Some(derive_wire_identity_key(self.require_secret()?, code, identity).as_str()),
                 false,
                 state,
                 true,
@@ -802,4 +829,25 @@ fn random_sample(questions: &[crate::domain::entity::Question], n: usize) -> Vec
     use rand::seq::SliceRandom;
     idxs.shuffle(&mut rng);
     idxs.into_iter().take(n).map(|i| questions[i].id).collect()
+}
+
+#[cfg(test)]
+mod wire_identity_tests {
+    use super::*;
+
+    /// The wire-identity handle is derived, not declared: deterministic per
+    /// (code, identity) under the secret, different per attendee, and never
+    /// a value a client could have minted itself.
+    #[test]
+    fn derived_handle_is_deterministic_and_secret_keyed() {
+        let a = derive_wire_identity_key(b"s1", "TOWNHALL", "dewi@x.id");
+        let b = derive_wire_identity_key(b"s1", "TOWNHALL", "dewi@x.id");
+        let c = derive_wire_identity_key(b"s1", "TOWNHALL", "other@x.id");
+        let d = derive_wire_identity_key(b"s2", "TOWNHALL", "dewi@x.id");
+        assert_eq!(a, b, "same attendee re-derives the same handle");
+        assert_ne!(a, c, "different attendees get different handles");
+        assert_ne!(a, d, "different sessions get different handles");
+        assert_eq!(a.len(), 32, "16 bytes as hex");
+        assert!(a.chars().all(|ch| ch.is_ascii_hexdigit()));
+    }
 }

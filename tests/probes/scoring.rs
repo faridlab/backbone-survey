@@ -145,7 +145,7 @@ async fn p05_speed_snapshot_immutable() {
     let code = armed.session_code.clone().expect("code");
     let ticket = svc
         .attempts
-        .join_by_code(&code, "zoe", "10.0.0.9", "wire-zoe", Some("zoe"))
+        .join_by_code(&code, "zoe", "10.0.0.9", Some("zoe"))
         .await
         .expect("join");
     let link = ticket.link.clone();

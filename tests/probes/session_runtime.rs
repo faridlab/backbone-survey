@@ -35,7 +35,7 @@ async fn p09_session_advance_lock() {
     let code = armed.session_code.clone().expect("code");
     let _attendee = svc
         .attempts
-        .join_by_code(&code, "pia", "10.0.0.11", "wire-pia", None)
+        .join_by_code(&code, "pia", "10.0.0.11", None)
         .await
         .expect("join");
 
@@ -113,17 +113,17 @@ async fn p10_session_end_bulk_done() {
     // Distinct identities AND IPs (the 1 s spacing is per code+identity).
     let alice = svc
         .attempts
-        .join_by_code(&code, "alice", "10.0.1.1", "wire-alice", None)
+        .join_by_code(&code, "alice", "10.0.1.1", None)
         .await
         .expect("alice joins");
     let bob = svc
         .attempts
-        .join_by_code(&code, "bob", "10.0.1.2", "wire-bob", None)
+        .join_by_code(&code, "bob", "10.0.1.2", None)
         .await
         .expect("bob joins");
     let carol = svc
         .attempts
-        .join_by_code(&code, "carol", "10.0.1.3", "wire-carol", None)
+        .join_by_code(&code, "carol", "10.0.1.3", None)
         .await
         .expect("carol joins");
 
@@ -176,7 +176,7 @@ async fn p10_session_end_bulk_done() {
     .await
     .expect("session state");
     assert!(state.is_none(), "end NULLs the session state");
-    match svc.attempts.join_by_code(&code, "late", "10.9.9.9", "wire-late", None).await {
+    match svc.attempts.join_by_code(&code, "late", "10.9.9.9", None).await {
         Err(SurveyWriteError::SessionCodeNotValid) => {}
         other => panic!("the ended code must refuse like an unknown one, got {other:?}"),
     }
@@ -249,21 +249,21 @@ async fn p14b_realtime_resolver_rule() {
     let code = armed.session_code.clone().expect("code");
     let t = svc
         .attempts
-        .join_by_code(&code, "riva", "10.0.0.5", "wire-riva", None)
+        .join_by_code(&code, "riva", "10.0.0.5", None)
         .await
         .expect("join");
 
-    assert!(svc.reads.resolver_allows(survey_id, "wire-riva").await.expect("allow riva"));
+    assert!(svc.reads.resolver_allows(survey_id, &svc.attempts.wire_identity_handle_for(&code, "riva").expect("derive riva")).await.expect("allow riva"));
     assert!(!svc.reads.resolver_allows(survey_id, "wire-nobody").await.expect("deny foreign"));
     // Another survey's session answer must not leak across.
     let (other, _ot) = seed_survey(&db.pool).await;
-    assert!(!svc.reads.resolver_allows(other, "wire-riva").await.expect("deny cross-survey"));
+    assert!(!svc.reads.resolver_allows(other, &svc.attempts.wire_identity_handle_for(&code, "riva").expect("derive riva cross")).await.expect("deny cross-survey"));
 
     // Finishing the attempt closes the read.
     svc.intake.begin(&t.link).await.expect("begin");
     svc.intake.finish(&t.link).await.expect("finish");
     assert!(
-        !svc.reads.resolver_allows(survey_id, "wire-riva").await.expect("deny finished"),
+        !svc.reads.resolver_allows(survey_id, &svc.attempts.wire_identity_handle_for(&code, "riva").expect("derive riva")).await.expect("deny finished"),
         "a done attempt no longer reads the channel"
     );
 
@@ -285,7 +285,7 @@ async fn p15_resolver_compose() {
     let code = armed.session_code.clone().expect("code");
     let _t = svc
         .attempts
-        .join_by_code(&code, "olve", "10.0.0.6", "wire-olve", None)
+        .join_by_code(&code, "olve", "10.0.0.6", None)
         .await
         .expect("join");
 
@@ -341,7 +341,7 @@ async fn p15_resolver_compose() {
 
     // The disallowed identity is denied; the attendee is allowed.
     assert!(!svc.reads.resolver_allows(survey_id, "wire-stranger").await.expect("deny"));
-    assert!(svc.reads.resolver_allows(survey_id, "wire-olve").await.expect("allow"));
+    assert!(svc.reads.resolver_allows(survey_id, &svc.attempts.wire_identity_handle_for(&code, "olve").expect("derive olve")).await.expect("allow"));
 
     // After end: no live question, no payload.
     svc.writes.end_session(survey_id).await.expect("end");

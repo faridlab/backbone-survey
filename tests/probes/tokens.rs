@@ -161,7 +161,7 @@ async fn p02b_code_verify_and_lockout() {
         if i > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(1050)).await;
         }
-        match svc.attempts.join_by_code("0000", "alice", "10.0.0.1", "wire-alice", None).await {
+        match svc.attempts.join_by_code("0000", "alice", "10.0.0.1", None).await {
             Err(SurveyWriteError::SessionCodeNotValid) => {}
             other => panic!("wrong code must refuse the shared body, got {other:?}"),
         }
@@ -171,10 +171,10 @@ async fn p02b_code_verify_and_lockout() {
     // Third wrong answer: the book crosses the threshold; the FOURTH
     // attempt (even with the RIGHT code shape) hits the locked refusal.
     tokio::time::sleep(std::time::Duration::from_millis(1050)).await;
-    let _ = svc.attempts.join_by_code("0000", "alice", "10.0.0.1", "wire-alice", None).await;
+    let _ = svc.attempts.join_by_code("0000", "alice", "10.0.0.1", None).await;
     assert_eq!(book.failures("code:0000|id:alice"), 3);
     tokio::time::sleep(std::time::Duration::from_millis(1050)).await;
-    match svc.attempts.join_by_code("0000", "alice", "10.0.0.1", "wire-alice", None).await {
+    match svc.attempts.join_by_code("0000", "alice", "10.0.0.1", None).await {
         Err(SurveyWriteError::SessionCodeLocked { retry_after_seconds }) => {
             assert!(retry_after_seconds > 0 && retry_after_seconds <= CODE_LOCK_CAP_SECONDS);
         }
@@ -183,8 +183,8 @@ async fn p02b_code_verify_and_lockout() {
 
     // Spacing: a different identity, twice in the same second — the
     // second attempt answers the spacing refusal (anti-hammering).
-    let _ = svc.attempts.join_by_code("0000", "bob", "10.0.0.2", "wire-bob", None).await;
-    match svc.attempts.join_by_code("0000", "bob", "10.0.0.2", "wire-bob", None).await {
+    let _ = svc.attempts.join_by_code("0000", "bob", "10.0.0.2", None).await;
+    match svc.attempts.join_by_code("0000", "bob", "10.0.0.2", None).await {
         Err(SurveyWriteError::SessionCodeSpacing) => {}
         other => panic!("hammering must hit the spacing refusal, got {other:?}"),
     }
@@ -193,17 +193,22 @@ async fn p02b_code_verify_and_lockout() {
     // is_session_answer, the guest handle stamped, and BOTH books reset.
     let ticket = svc
         .attempts
-        .join_by_code(&code, "carol", "10.0.0.3", "wire-carol", Some("carol"))
+        .join_by_code(&code, "carol", "10.0.0.3", Some("carol"))
         .await
         .expect("live code joins");
     let row = input_of(&db.pool, &ticket.link).await;
     assert!(row.is_session_answer, "code join is a session answer");
-    assert_eq!(row.wire_identity_key.as_deref(), Some("wire-carol"));
+    // The handle is DERIVED server-side (the body cannot declare it): the
+    // row carries exactly the digest the service derives for (code, carol).
+    assert_eq!(
+        row.wire_identity_key.as_deref(),
+        Some(svc.attempts.wire_identity_handle_for(&code, "carol").expect("derive carol").as_str())
+    );
     assert_eq!(state_of(&db.pool, row.id).await, "new", "armed-not-running session admits as new");
 
     // A dead code (session ended) and an unknown code share ONE refusal.
     svc.writes.end_session(survey_id).await.expect("end");
-    match svc.attempts.join_by_code(&code, "dave", "10.0.0.4", "wire-dave", None).await {
+    match svc.attempts.join_by_code(&code, "dave", "10.0.0.4", None).await {
         Err(SurveyWriteError::SessionCodeNotValid) => {}
         other => panic!("dead code must refuse identically to unknown, got {other:?}"),
     }
