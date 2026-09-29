@@ -149,6 +149,46 @@ async fn p07_intake_contract() {
         other => panic!("a page row must refuse, got {other:?}"),
     }
 
+    // Identity side-writes (SPEC 5.5) on their own survey (the frozen
+    // set is captured at attempt start, so a fresh survey is the honest
+    // stage): a save_as_email question's char answer lands on the INPUT
+    // row's email column; a plain char_box stamps nothing; a skipped
+    // save_as_* never clears the stamp (COALESCE keeps it). The refusal
+    // shape for "no save_as_* question" is simply no stamp — nothing
+    // refuses.
+    let (sid3, token3) = seed_survey_opts(&db.pool, "no_scoring", 80.0, None, None, false, None).await;
+    let q_email = seed_question(&db.pool, sid3, 10, "char_box", 1.0, false).await;
+    sqlx::query("UPDATE survey.survey_questions SET save_as_email = TRUE WHERE id = $1")
+        .bind(q_email).execute(&db.pool).await
+        .expect("arm save_as_email");
+    let q_plain = seed_question(&db.pool, sid3, 20, "char_box", 1.0, false).await;
+    let q_skip = seed_question(&db.pool, sid3, 30, "char_box", 1.0, false).await;
+    sqlx::query("UPDATE survey.survey_questions SET save_as_email = TRUE, constr_mandatory = FALSE WHERE id = $1")
+        .bind(q_skip).execute(&db.pool).await
+        .expect("arm skip target");
+    let link3 = start_attempt(&svc, &token3).await;
+    let before_plain = input_of(&db.pool, &link3).await;
+    svc.intake
+        .submit_answer(&link3, q_plain, AnswerDraft::Char("plain".into()))
+        .await
+        .expect("plain answer passes");
+    let row3 = input_of(&db.pool, &link3).await;
+    assert_eq!(row3.email, before_plain.email, "a plain char_box never touches the email stamp");
+
+    svc.intake
+        .submit_answer(&link3, q_email, AnswerDraft::Char("dewi@startapp.id".into()))
+        .await
+        .expect("email answer passes");
+    let row3 = input_of(&db.pool, &link3).await;
+    assert_eq!(row3.email.as_deref(), Some("dewi@startapp.id"), "the save_as_email answer stamped the input row");
+    assert_eq!(row3.nickname, before_plain.nickname, "no save_as_nickname question: nickname never changes");
+    svc.intake
+        .submit_answer(&link3, q_skip, AnswerDraft::Skipped)
+        .await
+        .expect("optional skip passes");
+    let row3 = input_of(&db.pool, &link3).await;
+    assert_eq!(row3.email.as_deref(), Some("dewi@startapp.id"), "a skip never clears the stamped email");
+
     // Overwrite without go-back: refused with the typed error.
     match svc.intake.submit_answer(&link, q1, AnswerDraft::Number(8.0)).await {
         Err(SurveyWriteError::OverwriteRefused { question_id }) => assert_eq!(question_id, q1),

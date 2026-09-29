@@ -380,6 +380,23 @@ impl IntakeService {
             }
         }
 
+        // (5b) SPEC 5.5 identity side-writes: a save_as_email /
+        // save_as_nickname question's char answer lands on the INPUT
+        // row's email / nickname column — the repository verb that had
+        // landed with no caller. A skipped or non-char answer stamps
+        // nothing, and the verb's COALESCE never clears a prior stamp.
+        if question.save_as_email || question.save_as_nickname {
+            if let Some(text) = scalar_char_of(&draft) {
+                AttemptRepository::set_identity_side_writes(
+                    &mut tx,
+                    input.id,
+                    question.save_as_email.then_some(text),
+                    question.save_as_nickname.then_some(text),
+                )
+                .await?;
+            }
+        }
+
         // (6) Conditional clearing: a choice answer that left a
         // conditional's trigger unchosen deletes its dependent lines.
         if let AnswerDraft::Choice(chosen) = &draft {
@@ -526,6 +543,15 @@ fn line_ratio(raw: Option<f64>, graded: Option<f64>) -> f64 {
 }
 
 /// Destructure the scalar drafts into storage columns.
+/// The char-family answer text an identity side-write stamps (Char and
+/// Comment carry it; the other scalar shapes stamp nothing).
+fn scalar_char_of(draft: &AnswerDraft) -> Option<&str> {
+    match draft {
+        AnswerDraft::Char(v) | AnswerDraft::Comment(v) => Some(v),
+        _ => None,
+    }
+}
+
 fn scalar_parts(
     draft: &AnswerDraft,
 ) -> (Option<&str>, Option<&str>, Option<f64>, Option<i32>, Option<NaiveDate>, Option<DateTime<Utc>>) {
