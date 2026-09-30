@@ -1,0 +1,38 @@
+# =============================================================================
+# survey_session_state — Survey.session_state (machine #2; ADR-0016 hand_set,
+#   over a NULLABLE field: NULL is the boundary the verbs arm from and end to).
+#
+# The live-session selection machine. arm FORCES page_per_question and mints
+# the session_code; start is the LAZY open on the first advance (stamps
+# session_start_time); end is the bulk-done close (forward-only per attendee,
+# invalidates the code) writing NULL back. The arm/start/end verbs in the
+# write service are the enforcement path — they consult this machine and keep
+# their conditional-UPDATE shapes (the concurrency-safe writes the DB-level
+# guards backstop).
+# =============================================================================
+
+name: survey_session_state
+model: Survey
+
+states:
+  field: session_state
+  values:
+    ready:
+      initial: true
+    in_progress:
+      {}
+  transitions:
+    arm:
+      from: "null"
+      to: ready
+      message: "Arm the live session — forces page_per_question, mints the session_code (Tier B join key). Entered from NULL only: a survey already carrying a session refuses (typed SessionCertificationConflict keeps the certification and live regimes disjoint)."
+    start:
+      from: ready
+      to: in_progress
+      message: "The lazy open on the first advance — stamps session_start_time (the leaderboard window's lower bound)."
+    end:
+      from:
+        - ready
+        - in_progress
+      to: "null"
+      message: "Close the session — the bulk-done edge runs forward-only per attendee (the same monotonic-safe conditional UPDATE shape as the input machine's), invalidates the session_code, and writes NULL back: the boundary is also the exit."

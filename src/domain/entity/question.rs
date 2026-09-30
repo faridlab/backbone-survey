@@ -527,6 +527,12 @@ impl backbone_orm::EntityRepoMeta for Question {
         m.insert("page_id".to_string(), "uuid".to_string());
         m.insert("question_type".to_string(), "survey_question_type".to_string());
         m.insert("matrix_subtype".to_string(), "survey_matrix_subtype".to_string());
+        m.insert("answer_date".to_string(), "date".to_string());
+        m.insert("answer_datetime".to_string(), "timestamptz".to_string());
+        m.insert("validation_min_date".to_string(), "date".to_string());
+        m.insert("validation_max_date".to_string(), "date".to_string());
+        m.insert("validation_min_datetime".to_string(), "timestamptz".to_string());
+        m.insert("validation_max_datetime".to_string(), "timestamptz".to_string());
         m
     }
     fn search_fields() -> &'static [&'static str] {

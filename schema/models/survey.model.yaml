@@ -152,21 +152,11 @@ models:
         type: SurveySessionState?
         lifecycle:
           shape: hand_set
-          # NOTE: no `state_machine:` ref and no machine hook file —
-          # deliberate, recorded. DECLARATION OF RECORD for the machine
-          # `survey_session_state` (this block): values ready / in_progress;
-          # NULL-boundary edges arm: NULL -> ready (forces
-          # page_per_question, mints the session_code) and
-          # end: {ready|in_progress} -> NULL (bulk-done forward-only,
-          # invalidate the code); declared edge start: ready -> in_progress
-          # (the lazy open on the first advance, stamps
-          # session_start_time). The arm/start/end verbs enforce all of it.
-          # WHY no machine file: the generator's transition emission assumes
-          # a NON-nullable state field (Display/FromStr directly on the
-          # field type — does not compile for Option<SurveySessionState>;
-          # it broke at entity transition_to and the handler's start
-          # endpoint). Restore the machine file when the generator grows
-          # nullable-state support.
+          # The machine `survey_session_state` (schema/hooks/
+          # survey_session_state.hook.yaml) guards this field over the NULL
+          # boundary: arm enters from NULL, end writes NULL back, start is
+          # the lazy open. The arm/start/end verbs are the enforcement path.
+          state_machine: survey_session_state
           display_labels:
             ready: "Ready"
             in_progress: "In Progress"

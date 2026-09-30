@@ -12,7 +12,7 @@ use super::{
     question_handler::create_question_routes,
     question_answer_handler::create_question_answer_routes,
     survey_question_triggering_answer_handler::create_survey_question_triggering_answer_routes,
-    survey_handler::create_survey_routes,
+    survey_handler::create_survey_read_routes,
     survey_survey_restrict_user_handler::create_survey_survey_restrict_user_routes,
     survey_survey_lang_handler::create_survey_survey_lang_routes,
     user_input_handler::create_user_input_read_routes,
@@ -68,8 +68,8 @@ pub fn configure_routes(services: HttpServices) -> Router {
         .merge(create_question_answer_routes(services.question_answer))
         // SurveyQuestionTriggeringAnswer routes (12 Backbone endpoints)
         .merge(create_survey_question_triggering_answer_routes(services.survey_question_triggering_answer))
-        // Survey routes (12 Backbone endpoints)
-        .merge(create_survey_routes(services.survey))
+        // Survey routes (READ-ONLY mount — hand_set lifecycle; the state field moves only through the module's validated verbs)
+        .merge(create_survey_read_routes(services.survey))
         // SurveySurveyRestrictUser routes (12 Backbone endpoints)
         .merge(create_survey_survey_restrict_user_routes(services.survey_survey_restrict_user))
         // SurveySurveyLang routes (12 Backbone endpoints)
@@ -99,7 +99,7 @@ pub mod individual {
     }
 
     pub fn survey_routes(service: Arc<SurveyService>) -> Router {
-        create_survey_routes(service)
+        create_survey_read_routes(service)
     }
 
     pub fn survey_survey_restrict_user_routes(service: Arc<SurveySurveyRestrictUserService>) -> Router {
@@ -111,11 +111,11 @@ pub mod individual {
     }
 
     pub fn user_input_routes(service: Arc<UserInputService>) -> Router {
-        create_user_input_routes(service)
+        create_user_input_read_routes(service)
     }
 
     pub fn user_input_line_routes(service: Arc<UserInputLineService>) -> Router {
-        create_user_input_line_routes(service)
+        create_user_input_line_read_routes(service)
     }
 
     pub fn survey_user_input_predefined_question_routes(service: Arc<SurveyUserInputPredefinedQuestionService>) -> Router {

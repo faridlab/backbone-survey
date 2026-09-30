@@ -42,7 +42,8 @@ async fn p09_session_advance_lock() {
     // The opening advance: lazy in_progress + cursor on q1.
     let opened = svc.writes.advance_session(survey_id).await.expect("first advance");
     assert_eq!(opened.session_question_id, Some(q1));
-    assert_eq!(opened.session_state.unwrap().to_string(), "in_progress");
+    let opened_dto = backbone_survey::presentation::dto::SurveyResponseDto::from(opened);
+    assert_eq!(opened_dto.session_state.unwrap().to_string(), "in_progress");
 
     // 8 SIMULTANEOUS advances: exactly two can still win (q2, q3).
     let writes = Arc::new(SurveyWriteService::new(db.pool.clone(), svc.sink.clone()));

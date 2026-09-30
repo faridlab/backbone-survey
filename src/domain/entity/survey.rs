@@ -13,6 +13,8 @@ use super::SurveyReportLayout;
 use super::SurveySessionState;
 use super::AuditMetadata;
 
+use crate::domain::state_machine::{survey_session_stateStateMachine, survey_session_stateState, StateMachineError};
+
 /// Strongly-typed ID for Survey
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -82,7 +84,7 @@ pub struct Survey {
     pub certification_report_layout: SurveyReportLayout,
     pub certification_give_badge: bool,
     pub certification_badge_key: Option<String>,
-    pub session_state: Option<SurveySessionState>,
+    pub(crate) session_state: Option<SurveySessionState>,
     pub session_code: Option<String>,
     pub session_question_id: Option<Uuid>,
     pub session_start_time: Option<DateTime<Utc>>,
@@ -268,6 +270,23 @@ impl Survey {
     }
 
     // ==========================================================
+    // State Machine
+    // ==========================================================
+
+    /// Transition to a new state via the session_state state machine.
+    ///
+    /// Returns `Err` if the transition is not permitted from the current state.
+    /// Use this method instead of assigning `self.session_state` directly.
+    pub fn transition_to(&mut self, new_state: Option<survey_session_stateState>) -> Result<(), StateMachineError> {
+        let current = self.session_state.as_ref().map(|v| v.to_string().parse::<survey_session_stateState>()).transpose()?;
+        let mut sm = survey_session_stateStateMachine::from_opt_state(current);
+        sm.transition_to_state(new_state)?;
+        self.session_state = new_state.map(|s| s.to_string().parse::<SurveySessionState>()
+            .map_err(|e| StateMachineError::InvalidState(e.to_string()))).transpose()?;
+        Ok(())
+    }
+
+    // ==========================================================
     // Partial Update
     // ==========================================================
 
@@ -349,9 +368,6 @@ impl Survey {
                 }
                 "certification_badge_key" => {
                     if let Ok(v) = serde_json::from_value(value) { self.certification_badge_key = v; }
-                }
-                "session_state" => {
-                    if let Ok(v) = serde_json::from_value(value) { self.session_state = v; }
                 }
                 "session_code" => {
                     if let Ok(v) = serde_json::from_value(value) { self.session_code = v; }
@@ -436,6 +452,8 @@ impl backbone_orm::EntityRepoMeta for Survey {
         m.insert("scoring_type".to_string(), "survey_scoring_type".to_string());
         m.insert("certification_report_layout".to_string(), "survey_report_layout".to_string());
         m.insert("session_state".to_string(), "survey_session_state".to_string());
+        m.insert("session_start_time".to_string(), "timestamptz".to_string());
+        m.insert("session_question_start_time".to_string(), "timestamptz".to_string());
         m
     }
     fn search_fields() -> &'static [&'static str] {

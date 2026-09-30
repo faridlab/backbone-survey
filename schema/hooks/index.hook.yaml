@@ -5,9 +5,12 @@
 # Hooks define: state machines, rules, permissions, triggers, computed fields.
 #
 # Hook files:
-#   survey.hook.yaml            the R-SV* rules with enforcement loci and the
-#                               lifecycle declarations for every entity
-#   survey_input_state.hook.yaml  the machine — UserInput.state (the attempt)
+#   survey.hook.yaml                     the R-SV* rules with enforcement loci and the
+#                                         lifecycle declarations for every entity
+#   survey_input_state.hook.yaml         the machine — UserInput.state (the attempt)
+#   survey_session_state.hook.yaml       the machine — Survey.session_state (the live
+#                                         session, over the NULL boundary: arm enters
+#                                         from NULL, end writes NULL back)
 #
 # This index carries: audit critical events (the fail-closed / anti-cheat
 # observables) and the ZERO-CRON declaration.
@@ -20,18 +23,7 @@ version: 2
 imports:
   - survey.hook.yaml
   - survey_input_state.hook.yaml
-
-# NOTE — Survey.session_state is hand_set with NO machine file, deliberate.
-# The column is NULLABLE (NULL = not armed / ended; the arm verb enters from
-# NULL and the end verb writes NULL back), and the code generator's state
-# machine emission assumes a non-nullable field (it calls Display/FromStr on
-# the field type directly, which does not compile for Option<...>). The
-# machine's declaration of record is the comment block on the field in
-# schema/models/survey.model.yaml: NULL-boundary edges (arm: NULL -> ready,
-# end: {ready|in_progress} -> NULL) and the one declared-edge transition
-# (start: ready -> in_progress, the lazy open on first advance). The arm/
-# start/end verbs enforce it. Restore a machine file when the generator
-# grows nullable-state support.
+  - survey_session_state.hook.yaml
 
 # =============================================================================
 # Module-level configuration

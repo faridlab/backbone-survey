@@ -349,6 +349,9 @@ impl backbone_orm::EntityRepoMeta for UserInputLine {
         m.insert("suggested_answer_id".to_string(), "uuid".to_string());
         m.insert("matrix_row_id".to_string(), "uuid".to_string());
         m.insert("answer_type".to_string(), "survey_answer_type".to_string());
+        m.insert("value_date".to_string(), "date".to_string());
+        m.insert("value_datetime".to_string(), "timestamptz".to_string());
+        m.insert("answered_at".to_string(), "timestamptz".to_string());
         m
     }
     fn search_fields() -> &'static [&'static str] {

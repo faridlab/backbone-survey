@@ -362,6 +362,10 @@ impl backbone_orm::EntityRepoMeta for UserInput {
         m.insert("user_id".to_string(), "uuid".to_string());
         m.insert("last_displayed_page_id".to_string(), "uuid".to_string());
         m.insert("state".to_string(), "survey_input_state".to_string());
+        m.insert("token_expires_at".to_string(), "timestamptz".to_string());
+        m.insert("start_datetime".to_string(), "timestamptz".to_string());
+        m.insert("end_datetime".to_string(), "timestamptz".to_string());
+        m.insert("deadline".to_string(), "timestamptz".to_string());
         m
     }
     fn search_fields() -> &'static [&'static str] {

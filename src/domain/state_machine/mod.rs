@@ -1,4 +1,5 @@
 mod survey_input_state_state_machine;
+mod survey_session_state_state_machine;
 
 /// Shared error type for all state machines in this module
 #[derive(Debug, Clone, thiserror::Error)]
@@ -29,3 +30,4 @@ pub enum StateMachineError {
 }
 
 pub use survey_input_state_state_machine::{survey_input_stateState, survey_input_stateTransition, survey_input_stateStateMachine};
+pub use survey_session_state_state_machine::{survey_session_stateState, survey_session_stateTransition, survey_session_stateStateMachine};

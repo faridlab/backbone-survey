@@ -13,7 +13,7 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 
 // Backbone framework imports
-use backbone_core::http::BackboneCrudHandler;
+use backbone_core::http::{ApiResponse, BackboneCrudHandler};
 
 // Auth integration (optional)
 #[cfg(feature = "auth")]
@@ -28,6 +28,7 @@ use crate::application::service::{SurveyService, ServiceError};
 // DTO imports
 use crate::presentation::dto::{CreateSurveyDto, UpdateSurveyDto, PatchSurveyDto, SurveyResponseDto};
 
+use crate::domain::state_machine::{survey_session_stateState, survey_session_stateStateMachine, survey_session_stateTransition};
 
 /// Application error type
 #[derive(Debug, thiserror::Error)]
@@ -185,4 +186,175 @@ pub fn create_protected_survey_routes<A: AuthMiddleware + Send + Sync + 'static>
                 }
             }
         }))
+}
+
+// =============================================================================
+// State Transition Handlers
+// =============================================================================
+
+/// Execute arm transition on a Survey.
+///
+/// POST /surveys/:id/transitions/arm
+pub async fn arm_transition(
+    axum::extract::State(service): axum::extract::State<Arc<SurveyService>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    #[cfg(feature = "auth")] axum::Extension(auth): axum::Extension<AuthContext>,
+) -> impl axum::response::IntoResponse {
+    use axum::{http::StatusCode, Json};
+
+    // Get current entity
+    let entity = match service.get_by_id(&id).await {
+        Ok(Some(e)) => e,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(ApiResponse::<SurveyResponseDto>::not_found("Survey", &id))),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<SurveyResponseDto>::error(e.to_string()))),
+    };
+
+    // Check permission (if auth enabled)
+    #[cfg(feature = "auth")]
+    {
+        let allowed_roles = survey_session_stateTransition::Arm.allowed_roles();
+        let has_specific_perm = auth.permissions.iter().any(|p| p == "survey:transition:arm");
+        let has_update_perm = auth.permissions.iter().any(|p| p == "survey:update");
+        if !has_specific_perm && !has_update_perm {
+            return (StatusCode::FORBIDDEN, Json(ApiResponse::<SurveyResponseDto>::error("Insufficient permissions for arm transition")));
+        }
+    }
+
+    // Create state machine from entity's actual status and validate transition
+    let current_state: Option<survey_session_stateState> = match &entity.session_state {
+        Some(v) => v.to_string().parse().ok(),
+        None => None,
+    };
+    let sm = survey_session_stateStateMachine::from_opt_state(current_state);
+    if !sm.can_transition(survey_session_stateTransition::Arm) {
+        return (StatusCode::BAD_REQUEST, Json(ApiResponse::<SurveyResponseDto>::error("Transition not allowed from current state")));
+    }
+
+    // Apply transition via partial update
+    let mut fields: HashMap<String, serde_json::Value> = HashMap::new();
+    fields.insert("session_state".to_string(), serde_json::Value::String("Ready".to_string()));
+
+    match service.partial_update(&id, fields).await {
+        Ok(Some(updated)) => {
+            let response: SurveyResponseDto = updated.into();
+            (StatusCode::OK, Json(ApiResponse::ok(response)))
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, Json(ApiResponse::<SurveyResponseDto>::not_found("Survey", &id))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<SurveyResponseDto>::error(e.to_string()))),
+    }
+}
+
+/// Execute start transition on a Survey.
+///
+/// POST /surveys/:id/transitions/start
+pub async fn start_transition(
+    axum::extract::State(service): axum::extract::State<Arc<SurveyService>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    #[cfg(feature = "auth")] axum::Extension(auth): axum::Extension<AuthContext>,
+) -> impl axum::response::IntoResponse {
+    use axum::{http::StatusCode, Json};
+
+    // Get current entity
+    let entity = match service.get_by_id(&id).await {
+        Ok(Some(e)) => e,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(ApiResponse::<SurveyResponseDto>::not_found("Survey", &id))),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<SurveyResponseDto>::error(e.to_string()))),
+    };
+
+    // Check permission (if auth enabled)
+    #[cfg(feature = "auth")]
+    {
+        let allowed_roles = survey_session_stateTransition::Start.allowed_roles();
+        let has_specific_perm = auth.permissions.iter().any(|p| p == "survey:transition:start");
+        let has_update_perm = auth.permissions.iter().any(|p| p == "survey:update");
+        if !has_specific_perm && !has_update_perm {
+            return (StatusCode::FORBIDDEN, Json(ApiResponse::<SurveyResponseDto>::error("Insufficient permissions for start transition")));
+        }
+    }
+
+    // Create state machine from entity's actual status and validate transition
+    let current_state: Option<survey_session_stateState> = match &entity.session_state {
+        Some(v) => v.to_string().parse().ok(),
+        None => None,
+    };
+    let sm = survey_session_stateStateMachine::from_opt_state(current_state);
+    if !sm.can_transition(survey_session_stateTransition::Start) {
+        return (StatusCode::BAD_REQUEST, Json(ApiResponse::<SurveyResponseDto>::error("Transition not allowed from current state")));
+    }
+
+    // Apply transition via partial update
+    let mut fields: HashMap<String, serde_json::Value> = HashMap::new();
+    fields.insert("session_state".to_string(), serde_json::Value::String("InProgress".to_string()));
+
+    match service.partial_update(&id, fields).await {
+        Ok(Some(updated)) => {
+            let response: SurveyResponseDto = updated.into();
+            (StatusCode::OK, Json(ApiResponse::ok(response)))
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, Json(ApiResponse::<SurveyResponseDto>::not_found("Survey", &id))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<SurveyResponseDto>::error(e.to_string()))),
+    }
+}
+
+/// Execute end transition on a Survey.
+///
+/// POST /surveys/:id/transitions/end
+pub async fn end_transition(
+    axum::extract::State(service): axum::extract::State<Arc<SurveyService>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    #[cfg(feature = "auth")] axum::Extension(auth): axum::Extension<AuthContext>,
+) -> impl axum::response::IntoResponse {
+    use axum::{http::StatusCode, Json};
+
+    // Get current entity
+    let entity = match service.get_by_id(&id).await {
+        Ok(Some(e)) => e,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(ApiResponse::<SurveyResponseDto>::not_found("Survey", &id))),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<SurveyResponseDto>::error(e.to_string()))),
+    };
+
+    // Check permission (if auth enabled)
+    #[cfg(feature = "auth")]
+    {
+        let allowed_roles = survey_session_stateTransition::End.allowed_roles();
+        let has_specific_perm = auth.permissions.iter().any(|p| p == "survey:transition:end");
+        let has_update_perm = auth.permissions.iter().any(|p| p == "survey:update");
+        if !has_specific_perm && !has_update_perm {
+            return (StatusCode::FORBIDDEN, Json(ApiResponse::<SurveyResponseDto>::error("Insufficient permissions for end transition")));
+        }
+    }
+
+    // Create state machine from entity's actual status and validate transition
+    let current_state: Option<survey_session_stateState> = match &entity.session_state {
+        Some(v) => v.to_string().parse().ok(),
+        None => None,
+    };
+    let sm = survey_session_stateStateMachine::from_opt_state(current_state);
+    if !sm.can_transition(survey_session_stateTransition::End) {
+        return (StatusCode::BAD_REQUEST, Json(ApiResponse::<SurveyResponseDto>::error("Transition not allowed from current state")));
+    }
+
+    // Apply transition via partial update
+    let mut fields: HashMap<String, serde_json::Value> = HashMap::new();
+    fields.insert("session_state".to_string(), serde_json::Value::Null);
+
+    match service.partial_update(&id, fields).await {
+        Ok(Some(updated)) => {
+            let response: SurveyResponseDto = updated.into();
+            (StatusCode::OK, Json(ApiResponse::ok(response)))
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, Json(ApiResponse::<SurveyResponseDto>::not_found("Survey", &id))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<SurveyResponseDto>::error(e.to_string()))),
+    }
+}
+
+/// Create routes for state transitions.
+pub fn create_survey_transition_routes(service: Arc<SurveyService>) -> Router {
+    use axum::routing::post;
+
+    Router::new()
+        .route("/surveys/:id/transitions/arm", post(arm_transition))
+        .route("/surveys/:id/transitions/start", post(start_transition))
+        .route("/surveys/:id/transitions/end", post(end_transition))
+        .with_state(service)
 }

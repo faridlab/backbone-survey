@@ -45,6 +45,9 @@ pub use application::service::UserInputService;
 pub use application::service::UserInputLineService;
 pub use application::service::SurveyUserInputPredefinedQuestionService;
 
+// Re-exports - Validation
+pub use application::validator::{ValidationError, ValidationResult};
+
 use std::sync::Arc;
 use axum::Router;
 use sqlx::PgPool;
@@ -110,7 +113,7 @@ impl SurveyModule {
             create_question_routes,
             create_question_answer_routes,
             create_survey_question_triggering_answer_routes,
-            create_survey_routes,
+            create_survey_read_routes,
             create_survey_survey_restrict_user_routes,
             create_survey_survey_lang_routes,
             create_user_input_read_routes,
@@ -122,7 +125,10 @@ impl SurveyModule {
             .merge(create_question_routes(self.question_service.clone()))
             .merge(create_question_answer_routes(self.question_answer_service.clone()))
             .merge(create_survey_question_triggering_answer_routes(self.survey_question_triggering_answer_service.clone()))
-            .merge(create_survey_routes(self.survey_service.clone()))
+            // Survey: hand_set lifecycle — the state field moves only through the
+            // module's validated verbs; generic writes cannot reach it, so only the
+            // read surface mounts here.
+            .merge(create_survey_read_routes(self.survey_service.clone()))
             .merge(create_survey_survey_restrict_user_routes(self.survey_survey_restrict_user_service.clone()))
             .merge(create_survey_survey_lang_routes(self.survey_survey_lang_service.clone()))
             .merge(create_user_input_read_routes(self.user_input_service.clone()))
