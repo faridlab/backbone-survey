@@ -409,6 +409,9 @@ impl super::Entity for Survey {
 }
 
 impl backbone_core::PersistentEntity for Survey {
+    fn write_protected_fields() -> &'static [&'static str] {
+        &["session_state"]
+    }
     fn entity_id(&self) -> String {
         self.id.to_string()
     }

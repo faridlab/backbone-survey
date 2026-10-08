@@ -1,6 +1,6 @@
 [package]
 name = "backbone-survey"
-version = "0.1.25"
+version = "0.2.0"
 edition = "2021"
 description = "Surveys & live sessions — survey/question composition, token-gated attempts with the frozen scoring denominator, the speed-rating engine, session codes with lockout, and the certification event contract (Odoo survey port)"
 license = "MIT OR Apache-2.0"
@@ -19,13 +19,13 @@ path = "src/lib.rs"
 # at module creation. Cargo dedupes the git fetch — the repo is only cloned
 # once even though several crates reference it.
 # -----------------------------------------------------------------------------
-backbone-core = { version = "2.7.35", features = ["postgres"] }
-backbone-orm = { version = "2.7.35" }
-backbone-auth = { version = "2.7.35" }
-backbone-messaging = { version = "2.7.35" }
+backbone-core = { version = "3.0.0", features = ["postgres"] }
+backbone-orm = { version = "3.0.0" }
+backbone-auth = { version = "3.0.0" }
+backbone-messaging = { version = "3.0.0" }
 # The public attempt/session route family is throttled at middleware
 # (ADR-0019 bare-capability mounts, the engagement /r/:code precedent).
-backbone-rate-limit = { version = "2.7.35" }
+backbone-rate-limit = { version = "3.0.0" }
 
 # Sibling modules: NONE by design. The certification seam (badge granting)
 # is a fail-closed port trait the composing host wires to engagement's
