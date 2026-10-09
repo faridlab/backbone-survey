@@ -13,7 +13,7 @@ use super::SurveyReportLayout;
 use super::SurveySessionState;
 use super::AuditMetadata;
 
-use crate::domain::state_machine::{survey_session_stateStateMachine, survey_session_stateState, StateMachineError};
+use crate::domain::state_machine::{SurveySessionStateStateMachine, SurveySessionStateState, StateMachineError};
 
 /// Strongly-typed ID for Survey
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -277,9 +277,9 @@ impl Survey {
     ///
     /// Returns `Err` if the transition is not permitted from the current state.
     /// Use this method instead of assigning `self.session_state` directly.
-    pub fn transition_to(&mut self, new_state: Option<survey_session_stateState>) -> Result<(), StateMachineError> {
-        let current = self.session_state.as_ref().map(|v| v.to_string().parse::<survey_session_stateState>()).transpose()?;
-        let mut sm = survey_session_stateStateMachine::from_opt_state(current);
+    pub fn transition_to(&mut self, new_state: Option<SurveySessionStateState>) -> Result<(), StateMachineError> {
+        let current = self.session_state.as_ref().map(|v| v.to_string().parse::<SurveySessionStateState>()).transpose()?;
+        let mut sm = SurveySessionStateStateMachine::from_opt_state(current);
         sm.transition_to_state(new_state)?;
         self.session_state = new_state.map(|s| s.to_string().parse::<SurveySessionState>()
             .map_err(|e| StateMachineError::InvalidState(e.to_string()))).transpose()?;

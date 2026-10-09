@@ -22,6 +22,6 @@ pub type SurveyTriggerHandlerObj =
 
 /// Create a default registry pre-populated with all handlers for Survey.
 pub fn survey_trigger_registry() -> SurveyTriggerRegistry {
-    TriggerRegistry::build(|r| {
+    TriggerRegistry::build(|_r| {
     })
 }

@@ -22,6 +22,6 @@ pub type UserInputTriggerHandlerObj =
 
 /// Create a default registry pre-populated with all handlers for UserInput.
 pub fn user_input_trigger_registry() -> UserInputTriggerRegistry {
-    TriggerRegistry::build(|r| {
+    TriggerRegistry::build(|_r| {
     })
 }

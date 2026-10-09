@@ -28,7 +28,7 @@ use crate::application::service::{UserInputService, ServiceError};
 // DTO imports
 use crate::presentation::dto::{CreateUserInputDto, UpdateUserInputDto, PatchUserInputDto, UserInputResponseDto};
 
-use crate::domain::state_machine::{survey_input_stateState, survey_input_stateStateMachine, survey_input_stateTransition};
+use crate::domain::state_machine::{SurveyInputStateState, SurveyInputStateStateMachine, SurveyInputStateTransition};
 
 /// Application error type
 #[derive(Debug, thiserror::Error)]
@@ -213,7 +213,7 @@ pub async fn begin_transition(
     // Check permission (if auth enabled)
     #[cfg(feature = "auth")]
     {
-        let allowed_roles = survey_input_stateTransition::Begin.allowed_roles();
+        let allowed_roles = SurveyInputStateTransition::Begin.allowed_roles();
         let has_specific_perm = auth.permissions.iter().any(|p| p == "user_input:transition:begin");
         let has_update_perm = auth.permissions.iter().any(|p| p == "user_input:update");
         if !has_specific_perm && !has_update_perm {
@@ -222,10 +222,10 @@ pub async fn begin_transition(
     }
 
     // Create state machine from entity's actual status and validate transition
-    let current_state: survey_input_stateState = entity.state.to_string().parse()
-        .unwrap_or(survey_input_stateState::default());
-    let sm = survey_input_stateStateMachine::from_state(current_state);
-    if !sm.can_transition(survey_input_stateTransition::Begin) {
+    let current_state: SurveyInputStateState = entity.state.to_string().parse()
+        .unwrap_or(SurveyInputStateState::default());
+    let sm = SurveyInputStateStateMachine::from_state(current_state);
+    if !sm.can_transition(SurveyInputStateTransition::Begin) {
         return (StatusCode::BAD_REQUEST, Json(ApiResponse::<UserInputResponseDto>::error("Transition not allowed from current state")));
     }
 
@@ -263,7 +263,7 @@ pub async fn mark_done_transition(
     // Check permission (if auth enabled)
     #[cfg(feature = "auth")]
     {
-        let allowed_roles = survey_input_stateTransition::MarkDone.allowed_roles();
+        let allowed_roles = SurveyInputStateTransition::MarkDone.allowed_roles();
         let has_specific_perm = auth.permissions.iter().any(|p| p == "user_input:transition:mark_done");
         let has_update_perm = auth.permissions.iter().any(|p| p == "user_input:update");
         if !has_specific_perm && !has_update_perm {
@@ -272,10 +272,10 @@ pub async fn mark_done_transition(
     }
 
     // Create state machine from entity's actual status and validate transition
-    let current_state: survey_input_stateState = entity.state.to_string().parse()
-        .unwrap_or(survey_input_stateState::default());
-    let sm = survey_input_stateStateMachine::from_state(current_state);
-    if !sm.can_transition(survey_input_stateTransition::MarkDone) {
+    let current_state: SurveyInputStateState = entity.state.to_string().parse()
+        .unwrap_or(SurveyInputStateState::default());
+    let sm = SurveyInputStateStateMachine::from_state(current_state);
+    if !sm.can_transition(SurveyInputStateTransition::MarkDone) {
         return (StatusCode::BAD_REQUEST, Json(ApiResponse::<UserInputResponseDto>::error("Transition not allowed from current state")));
     }
 
@@ -313,7 +313,7 @@ pub async fn session_bulk_done_transition(
     // Check permission (if auth enabled)
     #[cfg(feature = "auth")]
     {
-        let allowed_roles = survey_input_stateTransition::SessionBulkDone.allowed_roles();
+        let allowed_roles = SurveyInputStateTransition::SessionBulkDone.allowed_roles();
         let has_specific_perm = auth.permissions.iter().any(|p| p == "user_input:transition:session_bulk_done");
         let has_update_perm = auth.permissions.iter().any(|p| p == "user_input:update");
         if !has_specific_perm && !has_update_perm {
@@ -322,10 +322,10 @@ pub async fn session_bulk_done_transition(
     }
 
     // Create state machine from entity's actual status and validate transition
-    let current_state: survey_input_stateState = entity.state.to_string().parse()
-        .unwrap_or(survey_input_stateState::default());
-    let sm = survey_input_stateStateMachine::from_state(current_state);
-    if !sm.can_transition(survey_input_stateTransition::SessionBulkDone) {
+    let current_state: SurveyInputStateState = entity.state.to_string().parse()
+        .unwrap_or(SurveyInputStateState::default());
+    let sm = SurveyInputStateStateMachine::from_state(current_state);
+    if !sm.can_transition(SurveyInputStateTransition::SessionBulkDone) {
         return (StatusCode::BAD_REQUEST, Json(ApiResponse::<UserInputResponseDto>::error("Transition not allowed from current state")));
     }
 

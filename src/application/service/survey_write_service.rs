@@ -408,13 +408,13 @@ impl SurveyWriteService {
     /// exactly one place, the machine file.
     fn session_transition_ok(
         survey: &crate::domain::entity::Survey,
-        verb: crate::domain::state_machine::survey_session_stateTransition,
+        verb: crate::domain::state_machine::SurveySessionStateTransition,
     ) -> bool {
         let current = survey
             .session_state
             .as_ref()
-            .and_then(|s| s.to_string().parse::<crate::domain::state_machine::survey_session_stateState>().ok());
-        crate::domain::state_machine::survey_session_stateStateMachine::from_opt_state(current)
+            .and_then(|s| s.to_string().parse::<crate::domain::state_machine::SurveySessionStateState>().ok());
+        crate::domain::state_machine::SurveySessionStateStateMachine::from_opt_state(current)
             .can_transition(verb)
     }
 
@@ -434,7 +434,7 @@ impl SurveyWriteService {
             }
             // arm is legal only from the NULL boundary (the machine's edge);
             // anything else is an already-armed or live session.
-            if !Self::session_transition_ok(&survey, crate::domain::state_machine::survey_session_stateTransition::Arm) {
+            if !Self::session_transition_ok(&survey, crate::domain::state_machine::SurveySessionStateTransition::Arm) {
                 return Err(SurveyWriteError::SessionAlreadyArmed);
             }
         }
@@ -503,7 +503,7 @@ impl SurveyWriteService {
         let pre_write = Utc::now();
         // The lazy open rides the first advance: start is the machine's
         // ready -> in_progress edge.
-        if Self::session_transition_ok(&survey, crate::domain::state_machine::survey_session_stateTransition::Start) {
+        if Self::session_transition_ok(&survey, crate::domain::state_machine::SurveySessionStateTransition::Start) {
             SurveySessionRepository::open_session(&mut tx, survey_id, pre_write).await?;
             self.sink.record(&Fact::SessionStarted {
                 survey_id,
@@ -543,7 +543,7 @@ impl SurveyWriteService {
             .ok_or(SurveyWriteError::SurveyNotFound(survey_id))?;
         // end is legal from ready or in_progress (the machine's edges into
         // the NULL boundary); the un-armed case is the typed refusal below.
-        if !Self::session_transition_ok(&survey, crate::domain::state_machine::survey_session_stateTransition::End) {
+        if !Self::session_transition_ok(&survey, crate::domain::state_machine::SurveySessionStateTransition::End) {
             return Err(SurveyWriteError::SessionNotRunning);
         }
         let done = SurveySessionRepository::bulk_done_attendees(&mut tx, survey_id, Utc::now()).await?;
