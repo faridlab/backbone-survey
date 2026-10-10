@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use backbone_survey::application::service::survey_write_service::SurveyWriteError;
 use backbone_survey::domain::entity::UserInput;
-use backbone_survey::domain::state_machine::survey_input_stateState;
+use backbone_survey::domain::state_machine::SurveyInputStateState;
 
 use super::common::*;
 
@@ -124,27 +124,27 @@ fn p03a_state_machine_illegal_edges() {
         false,
     );
     // new -> done: no such edge.
-    assert!(input.transition_to(survey_input_stateState::Done).is_err(), "new -> done must refuse");
+    assert!(input.transition_to(SurveyInputStateState::Done).is_err(), "new -> done must refuse");
     // new -> in_progress: the begin edge.
     input
-        .transition_to(survey_input_stateState::InProgress)
+        .transition_to(SurveyInputStateState::InProgress)
         .expect("new -> in_progress is legal");
     // in_progress -> new: backward.
     assert!(
-        input.transition_to(survey_input_stateState::New).is_err(),
+        input.transition_to(SurveyInputStateState::New).is_err(),
         "in_progress -> new must refuse"
     );
     // in_progress -> done: the finish edge.
     input
-        .transition_to(survey_input_stateState::Done)
+        .transition_to(SurveyInputStateState::Done)
         .expect("in_progress -> done is legal");
     // done -> anything: terminal.
-    assert!(input.transition_to(survey_input_stateState::New).is_err(), "done -> new must refuse");
+    assert!(input.transition_to(SurveyInputStateState::New).is_err(), "done -> new must refuse");
     assert!(
-        input.transition_to(survey_input_stateState::InProgress).is_err(),
+        input.transition_to(SurveyInputStateState::InProgress).is_err(),
         "done -> in_progress must refuse"
     );
-    assert!(input.transition_to(survey_input_stateState::Done).is_err(), "done -> done must refuse");
+    assert!(input.transition_to(SurveyInputStateState::Done).is_err(), "done -> done must refuse");
 }
 
 /// The concurrent-duplicate attempt guard: two SIMULTANEOUS connections
