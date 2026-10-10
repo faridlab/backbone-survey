@@ -357,6 +357,12 @@ impl backbone_orm::EntityRepoMeta for UserInputLine {
     fn search_fields() -> &'static [&'static str] {
         &[]
     }
+    fn relation_secret_fields(relation: &str) -> &'static [&'static str] {
+        match relation {
+            "userInput" => &["tokenNonce"],
+            _ => &[],
+        }
+    }
     fn relations() -> &'static [(&'static str, &'static str, &'static str)] {
         &[("userInput", "survey_user_inputs", "userInputId"), ("question", "survey_questions", "questionId")]
     }

@@ -101,10 +101,6 @@ pub struct UpdateUserInputDto {
     #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
     #[serde(alias = "survey_id")]
     pub survey_id: Uuid,
-    #[cfg_attr(feature = "validation", validate(length(max = 64)))]
-    #[cfg_attr(feature = "openapi", schema(example = "example"))]
-    #[serde(alias = "token_nonce")]
-    pub token_nonce: String,
     #[cfg_attr(feature = "openapi", schema(example = "2024-01-01T00:00:00Z"))]
     #[serde(alias = "token_expires_at")]
     pub token_expires_at: DateTime<Utc>,
@@ -166,10 +162,6 @@ pub struct PatchUserInputDto {
     #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
     #[serde(skip_serializing_if = "Option::is_none", alias = "survey_id")]
     pub survey_id: Option<Uuid>,
-    #[cfg_attr(feature = "validation", validate(length(max = 64)))]
-    #[cfg_attr(feature = "openapi", schema(example = "example"))]
-    #[serde(skip_serializing_if = "Option::is_none", alias = "token_nonce")]
-    pub token_nonce: Option<String>,
     #[cfg_attr(feature = "openapi", schema(example = "2024-01-01T00:00:00Z"))]
     #[serde(skip_serializing_if = "Option::is_none", alias = "token_expires_at")]
     pub token_expires_at: Option<DateTime<Utc>>,
@@ -219,7 +211,7 @@ pub struct PatchUserInputDto {
 impl PatchUserInputDto {
     /// Check if any field is set
     pub fn has_changes(&self) -> bool {
-        self.survey_id.is_some() || self.token_nonce.is_some() || self.token_expires_at.is_some() || self.invite_token.is_some() || self.partner_id.is_some() || self.email.is_some() || self.nickname.is_some() || self.user_id.is_some() || self.wire_identity_key.is_some() || self.test_entry.is_some() || self.state.is_some() || self.start_datetime.is_some() || self.end_datetime.is_some() || self.deadline.is_some() || self.is_session_answer.is_some() || self.last_displayed_page_id.is_some() || self.scoring_percentage.is_some() || self.scoring_total.is_some() || self.scoring_success.is_some()
+        self.survey_id.is_some() || self.token_expires_at.is_some() || self.invite_token.is_some() || self.partner_id.is_some() || self.email.is_some() || self.nickname.is_some() || self.user_id.is_some() || self.wire_identity_key.is_some() || self.test_entry.is_some() || self.state.is_some() || self.start_datetime.is_some() || self.end_datetime.is_some() || self.deadline.is_some() || self.is_session_answer.is_some() || self.last_displayed_page_id.is_some() || self.scoring_percentage.is_some() || self.scoring_total.is_some() || self.scoring_success.is_some()
     }
 }
 
@@ -437,7 +429,6 @@ impl backbone_core::FromCreateDto<CreateUserInputDto> for UserInput {
 impl backbone_core::ApplyUpdateDto<UpdateUserInputDto> for UserInput {
     fn apply_update(mut self, dto: UpdateUserInputDto) -> backbone_core::ServiceResult<Self> {
         self.survey_id = dto.survey_id;
-        self.token_nonce = dto.token_nonce;
         self.token_expires_at = dto.token_expires_at;
         self.invite_token = dto.invite_token;
         self.partner_id = dto.partner_id;

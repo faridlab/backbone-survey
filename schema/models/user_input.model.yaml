@@ -52,7 +52,7 @@ models:
       # ---- the Tier A capability (ADR-0018; replaces the uuid4 access_token) --
       token_nonce:
         type: string
-        attributes: ["@required", "@max(64)", "@indexed"]
+        attributes: ["@required", "@max(64)", "@indexed", "@sensitive", "@immutable"]
         description: "128-bit hex SELECTOR of the per-attempt capability — the public link carries {input_id}.{nonce}.{exp}.{mac}; the MAC is HMAC-SHA256 over (id, nonce, grant, exp) with a server secret. The nonce alone is not the capability: a leaked row is inert. MULTI-USE within the attempt (unlike the rating single-use submit); rotation (officer verb or invitation resend) mints a fresh nonce + expiry atomically. Partial-UNIQUE among live rows rides the hardening migration."
       token_expires_at:
         type: datetime
@@ -62,7 +62,7 @@ models:
       # ---- the attempt pool (SPEC.md §2.6) --------------------------------------
       invite_token:
         type: string?
-        attributes: ["@max(64)"]
+        attributes: ["@max(64)", "@not_secret"]
         description: "DELIBERATELY NOT UNIQUE — names an attempt POOL (the invitation's recipient set). Attempt counting is the raw-SQL self-join: same survey + state=done + test_entry IS NOT TRUE + (invite_token shared or both NULL) + (same partner_id OR same email), flushed inside the caller's transaction. The resend verb re-enters through the same pool."
       partner_id:
         type: uuid?

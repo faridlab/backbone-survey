@@ -326,7 +326,7 @@ impl super::Entity for UserInput {
 
 impl backbone_core::PersistentEntity for UserInput {
     fn write_protected_fields() -> &'static [&'static str] {
-        &["state"]
+        &["token_nonce", "state"]
     }
     fn entity_id(&self) -> String {
         self.id.to_string()
@@ -372,7 +372,10 @@ impl backbone_orm::EntityRepoMeta for UserInput {
         m
     }
     fn search_fields() -> &'static [&'static str] {
-        &["token_nonce"]
+        &[]
+    }
+    fn secret_fields() -> &'static [&'static str] {
+        &["tokenNonce"]
     }
     fn relations() -> &'static [(&'static str, &'static str, &'static str)] {
         &[("survey", "survey_surveys", "surveyId")]

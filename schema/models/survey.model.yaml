@@ -70,7 +70,7 @@ models:
         description: "Responsible officer # logical FK sapiens.User.id (no DB constraint)."
       access_token:
         type: string
-        attributes: ["@required"]
+        attributes: ["@required", "@not_secret"]
         description: "Public URL key — UNIQUE, minted uuid4 at create by the write path. PUBLIC INFRASTRUCTURE, NOT A CREDENTIAL (SVF): it addresses the survey; the per-attempt Tier A capability on the input row authorizes the taker."
 
       # ---- layout & selection -------------------------------------------------
