@@ -206,8 +206,8 @@ pub async fn begin_transition(
     // Get current entity
     let entity = match service.get_by_id(&id).await {
         Ok(Some(e)) => e,
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(ApiResponse::<UserInputResponseDto>::not_found("UserInput", &id))),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<UserInputResponseDto>::error(e.to_string()))),
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(ApiResponse::<serde_json::Value>::not_found("UserInput", &id))),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<serde_json::Value>::error(e.to_string()))),
     };
 
     // Check permission (if auth enabled)
@@ -217,7 +217,7 @@ pub async fn begin_transition(
         let has_specific_perm = auth.permissions.iter().any(|p| p == "user_input:transition:begin");
         let has_update_perm = auth.permissions.iter().any(|p| p == "user_input:update");
         if !has_specific_perm && !has_update_perm {
-            return (StatusCode::FORBIDDEN, Json(ApiResponse::<UserInputResponseDto>::error("Insufficient permissions for begin transition")));
+            return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("Insufficient permissions for begin transition")));
         }
     }
 
@@ -226,7 +226,7 @@ pub async fn begin_transition(
         .unwrap_or(SurveyInputStateState::default());
     let sm = SurveyInputStateStateMachine::from_state(current_state);
     if !sm.can_transition(SurveyInputStateTransition::Begin) {
-        return (StatusCode::BAD_REQUEST, Json(ApiResponse::<UserInputResponseDto>::error("Transition not allowed from current state")));
+        return (StatusCode::BAD_REQUEST, Json(ApiResponse::<serde_json::Value>::error("Transition not allowed from current state")));
     }
 
     // Apply transition via partial update
@@ -236,10 +236,10 @@ pub async fn begin_transition(
     match service.partial_update(&id, fields).await {
         Ok(Some(updated)) => {
             let response: UserInputResponseDto = updated.into();
-            (StatusCode::OK, Json(ApiResponse::ok(response)))
+            (StatusCode::OK, Json(ApiResponse::ok(backbone_core::http::without_secrets::<UserInput, _>(response))))
         }
-        Ok(None) => (StatusCode::NOT_FOUND, Json(ApiResponse::<UserInputResponseDto>::not_found("UserInput", &id))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<UserInputResponseDto>::error(e.to_string()))),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(ApiResponse::<serde_json::Value>::not_found("UserInput", &id))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<serde_json::Value>::error(e.to_string()))),
     }
 }
 
@@ -256,8 +256,8 @@ pub async fn mark_done_transition(
     // Get current entity
     let entity = match service.get_by_id(&id).await {
         Ok(Some(e)) => e,
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(ApiResponse::<UserInputResponseDto>::not_found("UserInput", &id))),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<UserInputResponseDto>::error(e.to_string()))),
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(ApiResponse::<serde_json::Value>::not_found("UserInput", &id))),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<serde_json::Value>::error(e.to_string()))),
     };
 
     // Check permission (if auth enabled)
@@ -267,7 +267,7 @@ pub async fn mark_done_transition(
         let has_specific_perm = auth.permissions.iter().any(|p| p == "user_input:transition:mark_done");
         let has_update_perm = auth.permissions.iter().any(|p| p == "user_input:update");
         if !has_specific_perm && !has_update_perm {
-            return (StatusCode::FORBIDDEN, Json(ApiResponse::<UserInputResponseDto>::error("Insufficient permissions for mark_done transition")));
+            return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("Insufficient permissions for mark_done transition")));
         }
     }
 
@@ -276,7 +276,7 @@ pub async fn mark_done_transition(
         .unwrap_or(SurveyInputStateState::default());
     let sm = SurveyInputStateStateMachine::from_state(current_state);
     if !sm.can_transition(SurveyInputStateTransition::MarkDone) {
-        return (StatusCode::BAD_REQUEST, Json(ApiResponse::<UserInputResponseDto>::error("Transition not allowed from current state")));
+        return (StatusCode::BAD_REQUEST, Json(ApiResponse::<serde_json::Value>::error("Transition not allowed from current state")));
     }
 
     // Apply transition via partial update
@@ -286,10 +286,10 @@ pub async fn mark_done_transition(
     match service.partial_update(&id, fields).await {
         Ok(Some(updated)) => {
             let response: UserInputResponseDto = updated.into();
-            (StatusCode::OK, Json(ApiResponse::ok(response)))
+            (StatusCode::OK, Json(ApiResponse::ok(backbone_core::http::without_secrets::<UserInput, _>(response))))
         }
-        Ok(None) => (StatusCode::NOT_FOUND, Json(ApiResponse::<UserInputResponseDto>::not_found("UserInput", &id))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<UserInputResponseDto>::error(e.to_string()))),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(ApiResponse::<serde_json::Value>::not_found("UserInput", &id))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<serde_json::Value>::error(e.to_string()))),
     }
 }
 
@@ -306,8 +306,8 @@ pub async fn session_bulk_done_transition(
     // Get current entity
     let entity = match service.get_by_id(&id).await {
         Ok(Some(e)) => e,
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(ApiResponse::<UserInputResponseDto>::not_found("UserInput", &id))),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<UserInputResponseDto>::error(e.to_string()))),
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(ApiResponse::<serde_json::Value>::not_found("UserInput", &id))),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<serde_json::Value>::error(e.to_string()))),
     };
 
     // Check permission (if auth enabled)
@@ -317,7 +317,7 @@ pub async fn session_bulk_done_transition(
         let has_specific_perm = auth.permissions.iter().any(|p| p == "user_input:transition:session_bulk_done");
         let has_update_perm = auth.permissions.iter().any(|p| p == "user_input:update");
         if !has_specific_perm && !has_update_perm {
-            return (StatusCode::FORBIDDEN, Json(ApiResponse::<UserInputResponseDto>::error("Insufficient permissions for session_bulk_done transition")));
+            return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("Insufficient permissions for session_bulk_done transition")));
         }
     }
 
@@ -326,7 +326,7 @@ pub async fn session_bulk_done_transition(
         .unwrap_or(SurveyInputStateState::default());
     let sm = SurveyInputStateStateMachine::from_state(current_state);
     if !sm.can_transition(SurveyInputStateTransition::SessionBulkDone) {
-        return (StatusCode::BAD_REQUEST, Json(ApiResponse::<UserInputResponseDto>::error("Transition not allowed from current state")));
+        return (StatusCode::BAD_REQUEST, Json(ApiResponse::<serde_json::Value>::error("Transition not allowed from current state")));
     }
 
     // Apply transition via partial update
@@ -336,10 +336,10 @@ pub async fn session_bulk_done_transition(
     match service.partial_update(&id, fields).await {
         Ok(Some(updated)) => {
             let response: UserInputResponseDto = updated.into();
-            (StatusCode::OK, Json(ApiResponse::ok(response)))
+            (StatusCode::OK, Json(ApiResponse::ok(backbone_core::http::without_secrets::<UserInput, _>(response))))
         }
-        Ok(None) => (StatusCode::NOT_FOUND, Json(ApiResponse::<UserInputResponseDto>::not_found("UserInput", &id))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<UserInputResponseDto>::error(e.to_string()))),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(ApiResponse::<serde_json::Value>::not_found("UserInput", &id))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<serde_json::Value>::error(e.to_string()))),
     }
 }
 
