@@ -5,6 +5,7 @@ pub mod census_hygiene;
 pub mod certification;
 pub mod common;
 pub mod intake_windows;
+pub mod public_identity;
 pub mod scoring;
 pub mod session_runtime;
 pub mod state_pool;

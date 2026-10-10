@@ -170,6 +170,8 @@ async fn join_session(
 pub struct PublicStartBody {
     pub email: Option<String>,
     pub nickname: Option<String>,
+    /// Ignored: this route carries no session, so it cannot know who the taker is, and a body
+    /// could name anyone. Still accepted so existing callers keep working.
     pub user_id: Option<Uuid>,
 }
 
@@ -187,7 +189,9 @@ async fn public_start(
             &survey_token,
             body.email.as_deref(),
             body.nickname.as_deref(),
-            body.user_id,
+            // Every public attempt is a guest's: a survey that requires a login is refused
+            // here, whatever user the body names.
+            None,
         )
         .await
     {
