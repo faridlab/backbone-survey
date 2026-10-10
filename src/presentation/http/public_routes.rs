@@ -204,6 +204,45 @@ async fn public_start(
     }
 }
 
+#[derive(Deserialize)]
+pub struct SessionStartBody {
+    pub email: Option<String>,
+    pub nickname: Option<String>,
+}
+
+/// POST /survey/me/start/:survey_token — the signed-in entry: the same intake gates as the
+/// public start, with the taker taken from the session's principal, so a survey that
+/// requires a login can be started and the attempt is the principal's. Without the
+/// `OrgContext` the host's org guard inserts, the request is refused with 401.
+async fn signed_in_start(
+    State(app): State<ApiState>,
+    org: backbone_auth::org::OrgContext,
+    Path(survey_token): Path<String>,
+    Json(body): Json<SessionStartBody>,
+) -> Response {
+    let Ok(taker) = Uuid::parse_str(&org.user_id) else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "unauthenticated" }))).into_response();
+    };
+    match app
+        .attempt_service()
+        .public_start(&survey_token, body.email.as_deref(), body.nickname.as_deref(), Some(taker))
+        .await
+    {
+        Ok(ticket) => (
+            StatusCode::CREATED,
+            Json(json!({ "input_id": ticket.input.id, "link": ticket.link })),
+        )
+            .into_response(),
+        Err(e) => survey_err(e),
+    }
+}
+
+/// The SESSION survey group — mounted by the host behind its org guard; the principal is
+/// the taker.
+pub fn session_composer() -> Router<ApiState> {
+    Router::<ApiState>::new().route("/survey/me/start/:survey_token", post(signed_in_start))
+}
+
 /// POST /survey/attempt/:token/begin — open the attempt
 /// (`new -> in_progress`), stamping the start and the deadline.
 async fn begin_attempt(State(app): State<ApiState>, Path(token): Path<String>) -> Response {

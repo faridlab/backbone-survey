@@ -21,7 +21,7 @@ path = "src/lib.rs"
 # -----------------------------------------------------------------------------
 backbone-core = { version = "3.1.0", features = ["postgres"] }
 backbone-orm = { version = "3.1.0" }
-backbone-auth = { version = "3.0.0" }
+backbone-auth = { version = "3.0.0", features = ["axum"] }
 backbone-messaging = { version = "3.0.0" }
 # The public attempt/session route family is throttled at middleware
 # (ADR-0019 bare-capability mounts, the engagement /r/:code precedent).

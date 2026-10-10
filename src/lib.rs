@@ -227,6 +227,14 @@ impl SurveyModule {
             .with_state(Arc::clone(self))
     }
 
+    /// The SESSION start (`POST /survey/me/start/:survey_token`) — for the host's
+    /// org-guarded tree: the taker is the session's principal (`OrgContext`), so a survey
+    /// that requires a login can be taken. The public start cannot know who is taking.
+    pub fn survey_session_routes(self: &Arc<Self>) -> Router {
+        crate::presentation::http::public_routes::session_composer()
+            .with_state(Arc::clone(self))
+    }
+
     /// The GUARDED survey tree — the generated read-only base plus the
     /// officer verbs over the hand write services, for the host's
     /// authenticated tree (the host nests it at its `/api/v1/survey`
