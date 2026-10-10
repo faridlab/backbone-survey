@@ -1,6 +1,6 @@
 [package]
 name = "backbone-survey"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 description = "Surveys & live sessions — survey/question composition, token-gated attempts with the frozen scoring denominator, the speed-rating engine, session codes with lockout, and the certification event contract (Odoo survey port)"
 license = "MIT OR Apache-2.0"
@@ -19,8 +19,8 @@ path = "src/lib.rs"
 # at module creation. Cargo dedupes the git fetch — the repo is only cloned
 # once even though several crates reference it.
 # -----------------------------------------------------------------------------
-backbone-core = { version = "3.1.0", features = ["postgres"] }
-backbone-orm = { version = "3.1.0" }
+backbone-core = { version = "3.2.0", features = ["postgres"] }
+backbone-orm = { version = "3.2.0" }
 backbone-auth = { version = "3.0.0", features = ["axum"] }
 backbone-messaging = { version = "3.0.0" }
 # The public attempt/session route family is throttled at middleware
