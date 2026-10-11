@@ -16,7 +16,6 @@ use chrono::{DateTime, Utc};
 use backbone_core::http::{ApiResponse, BackboneCrudHandler};
 
 // Auth integration (optional)
-#[cfg(feature = "auth")]
 use backbone_auth::middleware::AuthContext;
 #[cfg(feature = "auth")]
 use backbone_auth::AuthMiddleware;
@@ -199,7 +198,7 @@ pub fn create_protected_user_input_routes<A: AuthMiddleware + Send + Sync + 'sta
 pub async fn begin_transition(
     axum::extract::State(service): axum::extract::State<Arc<UserInputService>>,
     axum::extract::Path(id): axum::extract::Path<String>,
-    #[cfg(feature = "auth")] axum::Extension(auth): axum::Extension<AuthContext>,
+    auth: Option<axum::Extension<AuthContext>>,
 ) -> impl axum::response::IntoResponse {
     use axum::{http::StatusCode, Json};
 
@@ -210,8 +209,10 @@ pub async fn begin_transition(
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<serde_json::Value>::error(e.to_string()))),
     };
 
-    // Check permission (if auth enabled)
-    #[cfg(feature = "auth")]
+    // Check permission
+    let Some(axum::Extension(auth)) = auth else {
+        return (StatusCode::UNAUTHORIZED, Json(ApiResponse::<serde_json::Value>::error("A transition needs an authenticated caller")));
+    };
     {
         let allowed_roles = SurveyInputStateTransition::Begin.allowed_roles();
         let has_specific_perm = auth.permissions.iter().any(|p| p == "user_input:transition:begin");
@@ -255,7 +256,7 @@ pub async fn begin_transition(
 pub async fn mark_done_transition(
     axum::extract::State(service): axum::extract::State<Arc<UserInputService>>,
     axum::extract::Path(id): axum::extract::Path<String>,
-    #[cfg(feature = "auth")] axum::Extension(auth): axum::Extension<AuthContext>,
+    auth: Option<axum::Extension<AuthContext>>,
 ) -> impl axum::response::IntoResponse {
     use axum::{http::StatusCode, Json};
 
@@ -266,8 +267,10 @@ pub async fn mark_done_transition(
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<serde_json::Value>::error(e.to_string()))),
     };
 
-    // Check permission (if auth enabled)
-    #[cfg(feature = "auth")]
+    // Check permission
+    let Some(axum::Extension(auth)) = auth else {
+        return (StatusCode::UNAUTHORIZED, Json(ApiResponse::<serde_json::Value>::error("A transition needs an authenticated caller")));
+    };
     {
         let allowed_roles = SurveyInputStateTransition::MarkDone.allowed_roles();
         let has_specific_perm = auth.permissions.iter().any(|p| p == "user_input:transition:mark_done");
@@ -311,7 +314,7 @@ pub async fn mark_done_transition(
 pub async fn session_bulk_done_transition(
     axum::extract::State(service): axum::extract::State<Arc<UserInputService>>,
     axum::extract::Path(id): axum::extract::Path<String>,
-    #[cfg(feature = "auth")] axum::Extension(auth): axum::Extension<AuthContext>,
+    auth: Option<axum::Extension<AuthContext>>,
 ) -> impl axum::response::IntoResponse {
     use axum::{http::StatusCode, Json};
 
@@ -322,8 +325,10 @@ pub async fn session_bulk_done_transition(
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<serde_json::Value>::error(e.to_string()))),
     };
 
-    // Check permission (if auth enabled)
-    #[cfg(feature = "auth")]
+    // Check permission
+    let Some(axum::Extension(auth)) = auth else {
+        return (StatusCode::UNAUTHORIZED, Json(ApiResponse::<serde_json::Value>::error("A transition needs an authenticated caller")));
+    };
     {
         let allowed_roles = SurveyInputStateTransition::SessionBulkDone.allowed_roles();
         let has_specific_perm = auth.permissions.iter().any(|p| p == "user_input:transition:session_bulk_done");
