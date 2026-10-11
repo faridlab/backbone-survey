@@ -27,6 +27,8 @@ pub use survey_survey_lang_service::SurveySurveyLangService;
 pub use user_input_service::UserInputService;
 pub use user_input_line_service::UserInputLineService;
 pub use survey_user_input_predefined_question_service::SurveyUserInputPredefinedQuestionService;
+pub use survey_service::SurveyRowRules;
+pub use user_input_service::UserInputRowRules;
 
 // This directory's extension (hand-written; ADR-0031).
 include!("mod.ext.rs");

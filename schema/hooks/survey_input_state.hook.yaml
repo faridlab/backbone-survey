@@ -21,6 +21,7 @@ model: UserInput
 
 states:
   field: state
+  verbs: hand
   values:
     new:
       initial: true

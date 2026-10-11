@@ -216,14 +216,20 @@ pub async fn begin_transition(
         let allowed_roles = SurveyInputStateTransition::Begin.allowed_roles();
         let has_specific_perm = auth.permissions.iter().any(|p| p == "user_input:transition:begin");
         let has_update_perm = auth.permissions.iter().any(|p| p == "user_input:update");
-        if !has_specific_perm && !has_update_perm {
-            return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("Insufficient permissions for begin transition")));
+        let _ = &allowed_roles;
+        if !has_specific_perm {
+            if !has_update_perm {
+                return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("Insufficient permissions for begin transition")));
+            }
+            tracing::warn!(target: "backbone::write_guard", entity = "UserInput", verb = "begin", code = "transition_by_update_permission", "a transition granted only by user_input:update, running in shadow; it needs user_input:transition:begin");
         }
     }
 
     // Create state machine from entity's actual status and validate transition
-    let current_state: SurveyInputStateState = entity.state.to_string().parse()
-        .unwrap_or(SurveyInputStateState::default());
+    let current_state: SurveyInputStateState = match entity.state.to_string().parse() {
+        Ok(s) => s,
+        Err(_) => return (StatusCode::CONFLICT, Json(ApiResponse::<serde_json::Value>::error("The stored state is not a state of this machine"))),
+    };
     let sm = SurveyInputStateStateMachine::from_state(current_state);
     if !sm.can_transition(SurveyInputStateTransition::Begin) {
         return (StatusCode::BAD_REQUEST, Json(ApiResponse::<serde_json::Value>::error("Transition not allowed from current state")));
@@ -231,9 +237,9 @@ pub async fn begin_transition(
 
     // Apply transition via partial update
     let mut fields: HashMap<String, serde_json::Value> = HashMap::new();
-    fields.insert("state".to_string(), serde_json::Value::String("InProgress".to_string()));
+    fields.insert("state".to_string(), serde_json::Value::String("in_progress".to_string()));
 
-    match service.partial_update(&id, fields).await {
+    match backbone_core::write_guard::as_transition("begin", service.partial_update(&id, fields)).await {
         Ok(Some(updated)) => {
             let response: UserInputResponseDto = updated.into();
             (StatusCode::OK, Json(ApiResponse::ok(backbone_core::http::without_secrets::<UserInput, _>(response))))
@@ -266,14 +272,20 @@ pub async fn mark_done_transition(
         let allowed_roles = SurveyInputStateTransition::MarkDone.allowed_roles();
         let has_specific_perm = auth.permissions.iter().any(|p| p == "user_input:transition:mark_done");
         let has_update_perm = auth.permissions.iter().any(|p| p == "user_input:update");
-        if !has_specific_perm && !has_update_perm {
-            return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("Insufficient permissions for mark_done transition")));
+        let _ = &allowed_roles;
+        if !has_specific_perm {
+            if !has_update_perm {
+                return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("Insufficient permissions for mark_done transition")));
+            }
+            tracing::warn!(target: "backbone::write_guard", entity = "UserInput", verb = "mark_done", code = "transition_by_update_permission", "a transition granted only by user_input:update, running in shadow; it needs user_input:transition:mark_done");
         }
     }
 
     // Create state machine from entity's actual status and validate transition
-    let current_state: SurveyInputStateState = entity.state.to_string().parse()
-        .unwrap_or(SurveyInputStateState::default());
+    let current_state: SurveyInputStateState = match entity.state.to_string().parse() {
+        Ok(s) => s,
+        Err(_) => return (StatusCode::CONFLICT, Json(ApiResponse::<serde_json::Value>::error("The stored state is not a state of this machine"))),
+    };
     let sm = SurveyInputStateStateMachine::from_state(current_state);
     if !sm.can_transition(SurveyInputStateTransition::MarkDone) {
         return (StatusCode::BAD_REQUEST, Json(ApiResponse::<serde_json::Value>::error("Transition not allowed from current state")));
@@ -281,9 +293,9 @@ pub async fn mark_done_transition(
 
     // Apply transition via partial update
     let mut fields: HashMap<String, serde_json::Value> = HashMap::new();
-    fields.insert("state".to_string(), serde_json::Value::String("Done".to_string()));
+    fields.insert("state".to_string(), serde_json::Value::String("done".to_string()));
 
-    match service.partial_update(&id, fields).await {
+    match backbone_core::write_guard::as_transition("mark_done", service.partial_update(&id, fields)).await {
         Ok(Some(updated)) => {
             let response: UserInputResponseDto = updated.into();
             (StatusCode::OK, Json(ApiResponse::ok(backbone_core::http::without_secrets::<UserInput, _>(response))))
@@ -316,14 +328,20 @@ pub async fn session_bulk_done_transition(
         let allowed_roles = SurveyInputStateTransition::SessionBulkDone.allowed_roles();
         let has_specific_perm = auth.permissions.iter().any(|p| p == "user_input:transition:session_bulk_done");
         let has_update_perm = auth.permissions.iter().any(|p| p == "user_input:update");
-        if !has_specific_perm && !has_update_perm {
-            return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("Insufficient permissions for session_bulk_done transition")));
+        let _ = &allowed_roles;
+        if !has_specific_perm {
+            if !has_update_perm {
+                return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("Insufficient permissions for session_bulk_done transition")));
+            }
+            tracing::warn!(target: "backbone::write_guard", entity = "UserInput", verb = "session_bulk_done", code = "transition_by_update_permission", "a transition granted only by user_input:update, running in shadow; it needs user_input:transition:session_bulk_done");
         }
     }
 
     // Create state machine from entity's actual status and validate transition
-    let current_state: SurveyInputStateState = entity.state.to_string().parse()
-        .unwrap_or(SurveyInputStateState::default());
+    let current_state: SurveyInputStateState = match entity.state.to_string().parse() {
+        Ok(s) => s,
+        Err(_) => return (StatusCode::CONFLICT, Json(ApiResponse::<serde_json::Value>::error("The stored state is not a state of this machine"))),
+    };
     let sm = SurveyInputStateStateMachine::from_state(current_state);
     if !sm.can_transition(SurveyInputStateTransition::SessionBulkDone) {
         return (StatusCode::BAD_REQUEST, Json(ApiResponse::<serde_json::Value>::error("Transition not allowed from current state")));
@@ -331,9 +349,9 @@ pub async fn session_bulk_done_transition(
 
     // Apply transition via partial update
     let mut fields: HashMap<String, serde_json::Value> = HashMap::new();
-    fields.insert("state".to_string(), serde_json::Value::String("Done".to_string()));
+    fields.insert("state".to_string(), serde_json::Value::String("done".to_string()));
 
-    match service.partial_update(&id, fields).await {
+    match backbone_core::write_guard::as_transition("session_bulk_done", service.partial_update(&id, fields)).await {
         Ok(Some(updated)) => {
             let response: UserInputResponseDto = updated.into();
             (StatusCode::OK, Json(ApiResponse::ok(backbone_core::http::without_secrets::<UserInput, _>(response))))

@@ -16,6 +16,7 @@ model: Survey
 
 states:
   field: session_state
+  verbs: hand
   values:
     ready:
       initial: true

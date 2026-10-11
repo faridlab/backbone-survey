@@ -261,7 +261,7 @@ impl SurveyModuleBuilder {
 
         // Survey service
         let survey_repository = Arc::new(SurveyRepository::new(db_pool.clone()));
-        let survey_service = Arc::new(SurveyService::with_repository(survey_repository.clone()));
+        let survey_service = Arc::new(SurveyService::with_repository(survey_repository.clone()).with_guard(Arc::new(crate::application::service::SurveyRowRules)));
 
         // SurveySurveyRestrictUser service
         let survey_survey_restrict_user_repository = Arc::new(SurveySurveyRestrictUserRepository::new(db_pool.clone()));
@@ -273,7 +273,7 @@ impl SurveyModuleBuilder {
 
         // UserInput service
         let user_input_repository = Arc::new(UserInputRepository::new(db_pool.clone()));
-        let user_input_service = Arc::new(UserInputService::with_repository(user_input_repository.clone()));
+        let user_input_service = Arc::new(UserInputService::with_repository(user_input_repository.clone()).with_guard(Arc::new(crate::application::service::UserInputRowRules)));
 
         // UserInputLine service
         let user_input_line_repository = Arc::new(UserInputLineRepository::new(db_pool.clone()));
