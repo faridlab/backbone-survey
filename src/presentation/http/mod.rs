@@ -16,7 +16,6 @@ pub mod user_input_line_handler;
 pub mod survey_user_input_predefined_question_handler;
 
 // <<< CUSTOM
-pub mod public_routes;
 // END CUSTOM
 
 // Re-exports
@@ -31,3 +30,6 @@ pub use user_input_line_handler::{create_user_input_line_routes, create_user_inp
 pub use survey_user_input_predefined_question_handler::{create_survey_user_input_predefined_question_routes, create_survey_user_input_predefined_question_read_routes, create_survey_user_input_predefined_question_write_routes};
 // <<< CUSTOM
 // END CUSTOM
+
+// This directory's extension (hand-written; ADR-0031).
+include!("mod.ext.rs");

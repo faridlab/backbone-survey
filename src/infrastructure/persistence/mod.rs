@@ -16,9 +16,6 @@ mod survey_user_input_predefined_question_repository;
 
 // Custom persistence modules
 // <<< CUSTOM
-pub(crate) mod attempt_repository;
-pub(crate) mod scoring_repository;
-pub(crate) mod survey_session_repository;
 // END CUSTOM
 
 // Re-exports
@@ -41,7 +38,7 @@ pub use backbone_orm::repository::{
 
 // Re-export custom persistence types
 // <<< CUSTOM
-pub use attempt_repository::AttemptRepository;
-pub use scoring_repository::{FrozenQuestion, ScoringRepository};
-pub use survey_session_repository::SurveySessionRepository;
 // END CUSTOM
+
+// This directory's extension (hand-written; ADR-0031).
+include!("mod.ext.rs");

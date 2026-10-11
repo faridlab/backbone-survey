@@ -27,6 +27,16 @@ pub mod exports;
 // <<< CUSTOM MODULES
 // END CUSTOM
 
+// The module's extension (hand-written; ADR-0031).
+#[path = "lib.ext.rs"]
+mod lib_ext;
+pub use lib_ext::*;
+/// This crate's module and builder under fixed names, for the extension's `impl` blocks.
+#[allow(dead_code)]
+pub(crate) type ThisModule = SurveyModule;
+#[allow(dead_code)]
+pub(crate) type ThisModuleBuilder = SurveyModuleBuilder;
+
 // Re-exports for convenience - Domain entities
 pub use domain::entity::*;
 
@@ -76,27 +86,47 @@ pub struct SurveyModule {
     pub(crate) user_input_service: Arc<UserInputService>,
     pub(crate) user_input_line_service: Arc<UserInputLineService>,
     pub(crate) survey_user_input_predefined_question_service: Arc<SurveyUserInputPredefinedQuestionService>,
+    /// The module's extension state (`lib.ext.rs`); its fields read through `Deref`.
+    pub(crate) ext: ModuleExt,
     // <<< CUSTOM FIELDS
-    /// The fail-closed certification seam (deny-by-default until the host
-    /// installs one via `set_certification_grant`).
-    pub(crate) certification_grant:
-        crate::application::service::certification_port::CertificationGrantSlot,
-    /// The shared event-sink seam (tracing-only until the host installs
-    /// its relay via `set_event_sink`).
-    pub(crate) event_sink:
-        crate::application::service::event_sink::EventSinkSlot,
-    pub(crate) attempt_service:
-        std::sync::Arc<crate::application::service::AttemptService>,
-    pub(crate) intake_service:
-        std::sync::Arc<crate::application::service::IntakeService>,
-    pub(crate) survey_write_service:
-        std::sync::Arc<crate::application::service::SurveyWriteService>,
-    pub(crate) session_read_service:
-        std::sync::Arc<crate::application::service::SessionReadService>,
-    pub(crate) scoring_service:
-        std::sync::Arc<crate::application::service::ScoringService>,
-    pub(crate) db_pool: sqlx::PgPool,
     // END CUSTOM
+}
+
+impl std::ops::Deref for SurveyModule {
+    type Target = ModuleExt;
+    fn deref(&self) -> &Self::Target {
+        &self.ext
+    }
+}
+
+impl std::ops::DerefMut for SurveyModule {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.ext
+    }
+}
+
+/// What the extension's `build` hook receives from the generated build (ADR-0031).
+#[allow(dead_code)]
+pub(crate) struct ModuleParts<'a> {
+    pub(crate) db_pool: &'a PgPool,
+    pub(crate) question_service: &'a Arc<QuestionService>,
+    pub(crate) question_repository: &'a Arc<QuestionRepository>,
+    pub(crate) question_answer_service: &'a Arc<QuestionAnswerService>,
+    pub(crate) question_answer_repository: &'a Arc<QuestionAnswerRepository>,
+    pub(crate) survey_question_triggering_answer_service: &'a Arc<SurveyQuestionTriggeringAnswerService>,
+    pub(crate) survey_question_triggering_answer_repository: &'a Arc<SurveyQuestionTriggeringAnswerRepository>,
+    pub(crate) survey_service: &'a Arc<SurveyService>,
+    pub(crate) survey_repository: &'a Arc<SurveyRepository>,
+    pub(crate) survey_survey_restrict_user_service: &'a Arc<SurveySurveyRestrictUserService>,
+    pub(crate) survey_survey_restrict_user_repository: &'a Arc<SurveySurveyRestrictUserRepository>,
+    pub(crate) survey_survey_lang_service: &'a Arc<SurveySurveyLangService>,
+    pub(crate) survey_survey_lang_repository: &'a Arc<SurveySurveyLangRepository>,
+    pub(crate) user_input_service: &'a Arc<UserInputService>,
+    pub(crate) user_input_repository: &'a Arc<UserInputRepository>,
+    pub(crate) user_input_line_service: &'a Arc<UserInputLineService>,
+    pub(crate) user_input_line_repository: &'a Arc<UserInputLineRepository>,
+    pub(crate) survey_user_input_predefined_question_service: &'a Arc<SurveyUserInputPredefinedQuestionService>,
+    pub(crate) survey_user_input_predefined_question_repository: &'a Arc<SurveyUserInputPredefinedQuestionRepository>,
 }
 
 impl SurveyModule {
@@ -179,239 +209,29 @@ impl SurveyModule {
     }
 
     // <<< CUSTOM METHODS
-    /// Compose the engagement badge-grant seam (deny-by-default until
-    /// called — the PhoneBookPort shape): the ONE registered
-    /// implementation delivers the CertificationPassed fact toward
-    /// engagement's exactly-once grant. Until a host calls this, every
-    /// certification publish refuses loudly with
-    /// `CertificationGrantError::NotComposed` and the refusal is recorded
-    /// as the audited critical event `survey_certification_grant_refused`.
-    pub fn set_certification_grant(
-        &self,
-        port: std::sync::Arc<dyn crate::application::service::certification_port::CertificationGrantPort>,
-    ) {
-        self.certification_grant.install(port);
-    }
-
-    /// Compose the host event-sink relay (the mail-leg / realtime-relay
-    /// seam). The default is tracing-only: a module built with no sink is
-    /// observable, not silent.
-    pub fn set_event_sink(
-        &self,
-        sink: std::sync::Arc<dyn crate::application::service::event_sink::SurveyEventSink>,
-    ) {
-        self.event_sink.install(sink);
-    }
-
-    pub fn attempt_service(&self) -> &crate::application::service::AttemptService {
-        &self.attempt_service
-    }
-    pub fn intake_service(&self) -> &crate::application::service::IntakeService {
-        &self.intake_service
-    }
-    pub fn survey_write_service(&self) -> &crate::application::service::SurveyWriteService {
-        &self.survey_write_service
-    }
-    pub fn session_read_service(&self) -> &crate::application::service::SessionReadService {
-        &self.session_read_service
-    }
-    pub fn scoring_service(&self) -> &crate::application::service::ScoringService {
-        &self.scoring_service
-    }
-
-    /// The PUBLIC survey tree — BARE capability mounts (the token is the
-    /// auth), throttled 120/min per client inside the composer. Mount at
-    /// the host root.
-    pub fn survey_public_routes(self: &Arc<Self>) -> Router {
-        crate::presentation::http::public_routes::public_composer()
-            .with_state(Arc::clone(self))
-    }
-
-    /// The SESSION start (`POST /survey/me/start/:survey_token`) — for the host's
-    /// org-guarded tree: the taker is the session's principal (`OrgContext`), so a survey
-    /// that requires a login can be taken. The public start cannot know who is taking.
-    pub fn survey_session_routes(self: &Arc<Self>) -> Router {
-        crate::presentation::http::public_routes::session_composer()
-            .with_state(Arc::clone(self))
-    }
-
-    /// The GUARDED survey tree — the generated read-only base plus the
-    /// officer verbs over the hand write services, for the host's
-    /// authenticated tree (the host nests it at its `/api/v1/survey`
-    /// behind identity + its module-write gate). Generic mutation never
-    /// reaches the attempt tables.
-    pub fn guarded_routes(self: &Arc<Self>) -> Router {
-        self.readonly_routes().merge(
-            crate::presentation::http::public_routes::guarded_composer()
-                .with_state(Arc::clone(self)),
-        )
-    }
-
-    /// The certification evidence view (the webapp certification page):
-    /// the attempt's verdicts + scores, with stored VALUES revealed only
-    /// under a with-answers scoring type. Requires a `scoring_success`
-    /// input.
-    pub async fn certification_evidence(
-        &self,
-        input_id: uuid::Uuid,
-    ) -> Result<serde_json::Value, crate::application::service::SurveyWriteError> {
-        use crate::application::service::SurveyWriteError as E;
-        use crate::domain::entity::SurveyScoringType;
-
-        let mut conn = self.db_pool.acquire().await?;
-        let input =
-            crate::infrastructure::persistence::AttemptRepository::find_live_by_id(
-                &mut conn, input_id,
-            )
-            .await?
-            .ok_or(E::InputNotFound(input_id))?;
-        if !input.scoring_success {
-            return Err(E::ValidationFailed {
-                question_id: input_id,
-                reason: "the attempt has not passed the scoring threshold".into(),
-            });
-        }
-        let survey = crate::infrastructure::persistence::SurveySessionRepository::find_survey_by_id(
-            &mut conn, input.survey_id,
-        )
-        .await?
-        .ok_or(E::SurveyNotFound(input.survey_id))?;
-
-        let reveal_values = matches!(
-            survey.scoring_type,
-            SurveyScoringType::ScoringWithAnswers | SurveyScoringType::ScoringWithAnswersAfterPage
-        );
-        let lines = sqlx::query_as::<_, (uuid::Uuid, bool, Option<f64>, Option<bool>, Option<String>, Option<String>)>(
-            r#"SELECT l.question_id, l.skipped, l.answer_score, l.answer_is_correct,
-                      l.value_char_box, l.value_text_box
-               FROM survey.survey_user_input_lines l
-               WHERE l.user_input_id = $1 AND (l.metadata->>'deleted_at') IS NULL"#,
-        )
-        .bind(input_id)
-        .fetch_all(&mut *conn)
-        .await?;
-
-        let line_views: Vec<serde_json::Value> = lines
-            .into_iter()
-            .map(|(question_id, skipped, score, correct, ch, tx)| {
-                let mut v = serde_json::json!({
-                    "question_id": question_id,
-                    "skipped": skipped,
-                    "answer_score": score,
-                    "answer_is_correct": correct,
-                });
-                if reveal_values {
-                    v["value"] = serde_json::json!(ch.or(tx));
-                }
-                v
-            })
-            .collect();
-
-        Ok(serde_json::json!({
-            "input_id": input.id,
-            "survey_id": survey.id,
-            "scoring_percentage": input.scoring_percentage,
-            "scoring_total": input.scoring_total,
-            "scoring_success": input.scoring_success,
-            "report_layout": survey.certification_report_layout.to_string(),
-            "has_badge": survey.certification_badge_key.is_some(),
-            "lines": line_views,
-        }))
-    }
-
-    /// The leaderboard view: top-15 done session attendees by raw
-    /// `scoring_total` with the CURRENT question's score subtracted (a
-    /// question still live must not rank).
-    pub async fn leaderboard_view(
-        &self,
-        survey_id: uuid::Uuid,
-    ) -> Result<Vec<serde_json::Value>, crate::application::service::SurveyWriteError> {
-        let snapshot = self.session_read_service().snapshot(survey_id).await?;
-        let current = snapshot.current_question_id;
-        let rows = sqlx::query_as::<_, (uuid::Uuid, Option<String>, f64, bool)>(
-            r#"SELECT i.id, i.nickname,
-                      i.scoring_total - COALESCE(cur.score, 0) AS total,
-                      i.scoring_success
-               FROM survey.survey_user_inputs i
-               LEFT JOIN (
-                   SELECT user_input_id, COALESCE(sum(answer_score), 0) AS score
-                   FROM survey.survey_user_input_lines
-                   WHERE survey_id = $1 AND question_id = $2
-                   GROUP BY user_input_id
-               ) cur ON cur.user_input_id = i.id
-               WHERE i.survey_id = $1
-                 AND i.is_session_answer
-                 AND i.state = 'done'
-                 AND i.test_entry IS NOT TRUE
-                 AND (i.metadata->>'deleted_at') IS NULL
-               ORDER BY total DESC, i.end_datetime ASC
-               LIMIT 15"#,
-        )
-        .bind(survey_id)
-        .bind(current)
-        .fetch_all(&self.db_pool)
-        .await?;
-        Ok(rows
-            .into_iter()
-            .map(|(id, nickname, total, success)| {
-                serde_json::json!({
-                    "input_id": id,
-                    "nickname": nickname,
-                    "total": total,
-                    "success": success,
-                })
-            })
-            .collect())
-    }
-
-    /// The statistics view: per-section (page) correct / partial /
-    /// incorrect / skipped counts over done, non-test attempts.
-    pub async fn statistics_view(
-        &self,
-        survey_id: uuid::Uuid,
-    ) -> Result<Vec<serde_json::Value>, crate::application::service::SurveyWriteError> {
-        let rows = sqlx::query_as::<_, (Option<uuid::Uuid>, i64, i64, i64, i64)>(
-            r#"SELECT q.page_id,
-                      count(*) FILTER (WHERE l.answer_is_correct) AS correct,
-                      count(*) FILTER (WHERE l.answer_is_correct = false
-                                          AND COALESCE(l.answer_score, 0) > 0) AS partial,
-                      count(*) FILTER (WHERE l.answer_is_correct = false
-                                          AND COALESCE(l.answer_score, 0) <= 0) AS incorrect,
-                      count(*) FILTER (WHERE l.skipped) AS skipped
-               FROM survey.survey_user_input_lines l
-               JOIN survey.survey_user_inputs i ON i.id = l.user_input_id
-               JOIN survey.survey_questions q ON q.id = l.question_id
-               WHERE i.survey_id = $1
-                 AND i.state = 'done'
-                 AND i.test_entry IS NOT TRUE
-                 AND (i.metadata->>'deleted_at') IS NULL
-               GROUP BY q.page_id
-               ORDER BY q.page_id NULLS FIRST"#,
-        )
-        .bind(survey_id)
-        .fetch_all(&self.db_pool)
-        .await?;
-        Ok(rows
-            .into_iter()
-            .map(|(page_id, correct, partial, incorrect, skipped)| {
-                serde_json::json!({
-                    "page_id": page_id,
-                    "correct": correct,
-                    "partial": partial,
-                    "incorrect": incorrect,
-                    "skipped": skipped,
-                })
-            })
-            .collect())
-    }
     // END CUSTOM
 }
 
 /// Builder for SurveyModule
 pub struct SurveyModuleBuilder {
     db_pool: Option<PgPool>,
+    /// The builder's extension state (`lib.ext.rs`); its fields read through `Deref`.
+    ext: ModuleBuilderExt,
     // <<< CUSTOM BUILDER FIELDS
     // END CUSTOM
+}
+
+impl std::ops::Deref for SurveyModuleBuilder {
+    type Target = ModuleBuilderExt;
+    fn deref(&self) -> &Self::Target {
+        &self.ext
+    }
+}
+
+impl std::ops::DerefMut for SurveyModuleBuilder {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.ext
+    }
 }
 
 impl SurveyModuleBuilder {
@@ -419,6 +239,7 @@ impl SurveyModuleBuilder {
     pub fn new() -> Self {
         Self {
             db_pool: None,
+            ext: Default::default(),
             // <<< CUSTOM BUILDER DEFAULTS
             // END CUSTOM
         }
@@ -475,36 +296,30 @@ impl SurveyModuleBuilder {
         let survey_user_input_predefined_question_service = Arc::new(SurveyUserInputPredefinedQuestionService::with_repository(survey_user_input_predefined_question_repository.clone()));
 
         // <<< CUSTOM
-        let certification_grant =
-            crate::application::service::certification_port::CertificationGrantSlot::default();
-        let event_sink = crate::application::service::event_sink::EventSinkSlot::default();
-        let attempt_service = std::sync::Arc::new(
-            crate::application::service::AttemptService::new(
-                db_pool.clone(),
-                event_sink.clone(),
-            ),
-        );
-        let intake_service = std::sync::Arc::new(
-            crate::application::service::IntakeService::new(
-                db_pool.clone(),
-                attempt_service.clone(),
-                event_sink.clone(),
-                certification_grant.clone(),
-            ),
-        );
-        let survey_write_service = std::sync::Arc::new(
-            crate::application::service::SurveyWriteService::new(
-                db_pool.clone(),
-                event_sink.clone(),
-            ),
-        );
-        let session_read_service = std::sync::Arc::new(
-            crate::application::service::SessionReadService::new(db_pool.clone()),
-        );
-        let scoring_service = std::sync::Arc::new(
-            crate::application::service::ScoringService::new(db_pool.clone()),
-        );
         // END CUSTOM
+
+        // The extension builds its own state from what the generated build made.
+        let ext = self.ext.build(&ModuleParts {
+            db_pool: &db_pool,
+            question_service: &question_service,
+            question_repository: &question_repository,
+            question_answer_service: &question_answer_service,
+            question_answer_repository: &question_answer_repository,
+            survey_question_triggering_answer_service: &survey_question_triggering_answer_service,
+            survey_question_triggering_answer_repository: &survey_question_triggering_answer_repository,
+            survey_service: &survey_service,
+            survey_repository: &survey_repository,
+            survey_survey_restrict_user_service: &survey_survey_restrict_user_service,
+            survey_survey_restrict_user_repository: &survey_survey_restrict_user_repository,
+            survey_survey_lang_service: &survey_survey_lang_service,
+            survey_survey_lang_repository: &survey_survey_lang_repository,
+            user_input_service: &user_input_service,
+            user_input_repository: &user_input_repository,
+            user_input_line_service: &user_input_line_service,
+            user_input_line_repository: &user_input_line_repository,
+            survey_user_input_predefined_question_service: &survey_user_input_predefined_question_service,
+            survey_user_input_predefined_question_repository: &survey_user_input_predefined_question_repository,
+        })?;
 
         Ok(SurveyModule {
             question_service,
@@ -516,15 +331,8 @@ impl SurveyModuleBuilder {
             user_input_service,
             user_input_line_service,
             survey_user_input_predefined_question_service,
+            ext,
             // <<< CUSTOM
-            certification_grant,
-            event_sink,
-            attempt_service,
-            intake_service,
-            survey_write_service,
-            session_read_service,
-            scoring_service,
-            db_pool,
             // END CUSTOM
         })
     }
