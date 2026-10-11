@@ -22,9 +22,5 @@ pub fn survey_validator() -> SurveyValidator {
         .rule(RequiredString::new("access_token", |e: &Survey| &e.access_token))
         .rule(OptionalNotBlank::new("certification_badge_key", |e: &Survey| e.certification_badge_key.as_deref()))
         .rule(OptionalNotBlank::new("session_code", |e: &Survey| e.session_code.as_deref()))
-    // <<< CUSTOM RULES
-    // END CUSTOM RULES
 }
 
-// <<< CUSTOM
-// END CUSTOM

@@ -359,3 +359,4 @@ pub fn create_survey_transition_routes(service: Arc<SurveyService>) -> Router {
         .route("/surveys/:id/transitions/end", post(end_transition))
         .with_state(service)
 }
+

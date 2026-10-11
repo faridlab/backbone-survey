@@ -32,5 +32,3 @@ pub type UserInputService = GenericCrudService<
     UserInputRepository,
 >;
 
-// <<< CUSTOM
-// END CUSTOM

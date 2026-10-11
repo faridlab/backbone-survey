@@ -294,8 +294,6 @@ impl UserInputLine {
         }
     }
 
-    // <<< CUSTOM METHODS START >>>
-    // <<< CUSTOM METHODS END >>>
 }
 
 impl super::Entity for UserInputLine {

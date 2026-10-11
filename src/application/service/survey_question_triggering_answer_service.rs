@@ -32,5 +32,3 @@ pub type SurveyQuestionTriggeringAnswerService = GenericCrudService<
     SurveyQuestionTriggeringAnswerRepository,
 >;
 
-// <<< CUSTOM
-// END CUSTOM

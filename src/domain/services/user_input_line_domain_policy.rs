@@ -18,5 +18,3 @@ use crate::domain::entity::UserInputLine;
 /// service. `PermitAllPolicy` is the safe default until then.
 pub type UserInputLineDomainPolicy = PermitAllPolicy<UserInputLine>;
 
-// <<< CUSTOM
-// END CUSTOM

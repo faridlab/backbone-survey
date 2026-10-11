@@ -25,9 +25,5 @@ pub fn question_validator() -> QuestionValidator {
         .rule(OptionalNotBlank::new("comments_message", |e: &Question| e.comments_message.as_deref()))
         .rule(OptionalNotBlank::new("validation_error_msg", |e: &Question| e.validation_error_msg.as_deref()))
         .rule(OptionalNotBlank::new("constr_error_msg", |e: &Question| e.constr_error_msg.as_deref()))
-    // <<< CUSTOM RULES
-    // END CUSTOM RULES
 }
 
-// <<< CUSTOM
-// END CUSTOM

@@ -32,5 +32,3 @@ pub type SurveySurveyRestrictUserService = GenericCrudService<
     SurveySurveyRestrictUserRepository,
 >;
 
-// <<< CUSTOM
-// END CUSTOM

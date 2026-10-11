@@ -236,7 +236,7 @@ impl backbone_core::ApplyUpdateDto<UpdateSurveySurveyRestrictUserDto> for Survey
 // Custom DTOs
 // =============================================================================
 
-// <<< CUSTOM DTOs
 // Add custom DTOs specific to SurveySurveyRestrictUser here.
 // This section will be preserved during regeneration.
 // >>> END CUSTOM DTOs
+

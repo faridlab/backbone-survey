@@ -18,5 +18,3 @@ use crate::domain::entity::SurveySurveyLang;
 /// service. `PermitAllPolicy` is the safe default until then.
 pub type SurveySurveyLangDomainPolicy = PermitAllPolicy<SurveySurveyLang>;
 
-// <<< CUSTOM
-// END CUSTOM

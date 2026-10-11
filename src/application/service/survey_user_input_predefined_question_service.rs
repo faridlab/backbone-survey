@@ -32,5 +32,3 @@ pub type SurveyUserInputPredefinedQuestionService = GenericCrudService<
     SurveyUserInputPredefinedQuestionRepository,
 >;
 
-// <<< CUSTOM
-// END CUSTOM

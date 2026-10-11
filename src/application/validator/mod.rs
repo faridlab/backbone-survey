@@ -25,5 +25,3 @@ pub use user_input_validator::{UserInputValidator, user_input_validator};
 pub use user_input_line_validator::{UserInputLineValidator, user_input_line_validator};
 pub use survey_user_input_predefined_question_validator::{SurveyUserInputPredefinedQuestionValidator, survey_user_input_predefined_question_validator};
 
-// <<< CUSTOM
-// END CUSTOM

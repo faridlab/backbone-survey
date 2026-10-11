@@ -18,5 +18,3 @@ use crate::domain::entity::SurveyUserInputPredefinedQuestion;
 /// service. `PermitAllPolicy` is the safe default until then.
 pub type SurveyUserInputPredefinedQuestionDomainPolicy = PermitAllPolicy<SurveyUserInputPredefinedQuestion>;
 
-// <<< CUSTOM
-// END CUSTOM

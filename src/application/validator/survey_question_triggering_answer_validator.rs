@@ -14,10 +14,6 @@ pub type SurveyQuestionTriggeringAnswerValidator = EntityValidator<SurveyQuestio
 /// Build a validator for SurveyQuestionTriggeringAnswer with all schema-defined field rules.
 pub fn survey_question_triggering_answer_validator() -> SurveyQuestionTriggeringAnswerValidator {
     EntityValidator::new()
-    // <<< CUSTOM RULES
-    // END CUSTOM RULES
         // No schema-derived rules — add custom rules above.
 }
 
-// <<< CUSTOM
-// END CUSTOM

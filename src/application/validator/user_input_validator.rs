@@ -20,9 +20,5 @@ pub fn user_input_validator() -> UserInputValidator {
         .rule(OptionalNotBlank::new("email", |e: &UserInput| e.email.as_deref()))
         .rule(OptionalNotBlank::new("nickname", |e: &UserInput| e.nickname.as_deref()))
         .rule(OptionalNotBlank::new("wire_identity_key", |e: &UserInput| e.wire_identity_key.as_deref()))
-    // <<< CUSTOM RULES
-    // END CUSTOM RULES
 }
 
-// <<< CUSTOM
-// END CUSTOM

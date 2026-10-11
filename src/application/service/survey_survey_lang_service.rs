@@ -32,5 +32,3 @@ pub type SurveySurveyLangService = GenericCrudService<
     SurveySurveyLangRepository,
 >;
 
-// <<< CUSTOM
-// END CUSTOM

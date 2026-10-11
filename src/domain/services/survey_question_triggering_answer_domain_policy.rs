@@ -18,5 +18,3 @@ use crate::domain::entity::SurveyQuestionTriggeringAnswer;
 /// service. `PermitAllPolicy` is the safe default until then.
 pub type SurveyQuestionTriggeringAnswerDomainPolicy = PermitAllPolicy<SurveyQuestionTriggeringAnswer>;
 
-// <<< CUSTOM
-// END CUSTOM

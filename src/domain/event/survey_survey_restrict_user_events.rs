@@ -11,8 +11,6 @@ use crate::domain::entity::SurveySurveyRestrictUser;
 /// enum containing a `Crud(CrudEvent<SurveySurveyRestrictUser>)` variant.
 pub type SurveySurveyRestrictUserEvent = CrudEvent<SurveySurveyRestrictUser>;
 
-// <<< CUSTOM
-// END CUSTOM
 
 use backbone_messaging::{CrudEventPublisher, NoOpCrudEventPublisher};
 use std::sync::Arc;

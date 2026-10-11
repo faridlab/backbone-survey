@@ -205,8 +205,6 @@ impl QuestionAnswer {
         }
     }
 
-    // <<< CUSTOM METHODS START >>>
-    // <<< CUSTOM METHODS END >>>
 }
 
 impl super::Entity for QuestionAnswer {

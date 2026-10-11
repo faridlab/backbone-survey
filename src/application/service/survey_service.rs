@@ -32,5 +32,3 @@ pub type SurveyService = GenericCrudService<
     SurveyRepository,
 >;
 
-// <<< CUSTOM
-// END CUSTOM

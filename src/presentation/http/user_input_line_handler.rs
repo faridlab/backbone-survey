@@ -187,3 +187,4 @@ pub fn create_protected_user_input_line_routes<A: AuthMiddleware + Send + Sync +
             }
         }))
 }
+

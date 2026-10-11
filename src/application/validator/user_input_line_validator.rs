@@ -17,9 +17,5 @@ pub fn user_input_line_validator() -> UserInputLineValidator {
     EntityValidator::new()
         .rule(OptionalNotBlank::new("value_char_box", |e: &UserInputLine| e.value_char_box.as_deref()))
         .rule(OptionalNotBlank::new("value_text_box", |e: &UserInputLine| e.value_text_box.as_deref()))
-    // <<< CUSTOM RULES
-    // END CUSTOM RULES
 }
 
-// <<< CUSTOM
-// END CUSTOM

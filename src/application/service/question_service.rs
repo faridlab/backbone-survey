@@ -32,5 +32,3 @@ pub type QuestionService = GenericCrudService<
     QuestionRepository,
 >;
 
-// <<< CUSTOM
-// END CUSTOM

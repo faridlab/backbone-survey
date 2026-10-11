@@ -623,7 +623,7 @@ impl backbone_core::ApplyUpdateDto<UpdateSurveyDto> for Survey {
 // Custom DTOs
 // =============================================================================
 
-// <<< CUSTOM DTOs
 // Add custom DTOs specific to Survey here.
 // This section will be preserved during regeneration.
 // >>> END CUSTOM DTOs
+

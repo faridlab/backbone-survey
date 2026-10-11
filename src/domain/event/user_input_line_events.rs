@@ -11,8 +11,6 @@ use crate::domain::entity::UserInputLine;
 /// enum containing a `Crud(CrudEvent<UserInputLine>)` variant.
 pub type UserInputLineEvent = CrudEvent<UserInputLine>;
 
-// <<< CUSTOM
-// END CUSTOM
 
 use backbone_messaging::{CrudEventPublisher, NoOpCrudEventPublisher};
 use std::sync::Arc;

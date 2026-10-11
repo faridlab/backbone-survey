@@ -454,7 +454,7 @@ impl backbone_core::ApplyUpdateDto<UpdateUserInputDto> for UserInput {
 // Custom DTOs
 // =============================================================================
 
-// <<< CUSTOM DTOs
 // Add custom DTOs specific to UserInput here.
 // This section will be preserved during regeneration.
 // >>> END CUSTOM DTOs
+

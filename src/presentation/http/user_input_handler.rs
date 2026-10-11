@@ -353,3 +353,4 @@ pub fn create_user_input_transition_routes(service: Arc<UserInputService>) -> Ro
         .route("/user_inputs/:id/transitions/session_bulk_done", post(session_bulk_done_transition))
         .with_state(service)
 }
+

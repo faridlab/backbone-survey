@@ -40,5 +40,3 @@ pub use user_input_line_event_handlers::UserInputLineEventHandler;
 pub use survey_user_input_predefined_question_events::{SurveyUserInputPredefinedQuestionEvent, SurveyUserInputPredefinedQuestionEventPublisher, NoopSurveyUserInputPredefinedQuestionEventPublisher};
 pub use survey_user_input_predefined_question_event_handlers::SurveyUserInputPredefinedQuestionEventHandler;
 
-// <<< CUSTOM
-// END CUSTOM

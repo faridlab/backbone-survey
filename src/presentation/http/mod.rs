@@ -15,8 +15,6 @@ pub mod user_input_handler;
 pub mod user_input_line_handler;
 pub mod survey_user_input_predefined_question_handler;
 
-// <<< CUSTOM
-// END CUSTOM
 
 // Re-exports
 pub use question_handler::{create_question_routes, create_question_read_routes, create_question_write_routes};
@@ -28,8 +26,6 @@ pub use survey_survey_lang_handler::{create_survey_survey_lang_routes, create_su
 pub use user_input_handler::{create_user_input_routes, create_user_input_read_routes, create_user_input_write_routes};
 pub use user_input_line_handler::{create_user_input_line_routes, create_user_input_line_read_routes, create_user_input_line_write_routes};
 pub use survey_user_input_predefined_question_handler::{create_survey_user_input_predefined_question_routes, create_survey_user_input_predefined_question_read_routes, create_survey_user_input_predefined_question_write_routes};
-// <<< CUSTOM
-// END CUSTOM
 
 // This directory's extension (hand-written; ADR-0031).
 include!("mod.ext.rs");

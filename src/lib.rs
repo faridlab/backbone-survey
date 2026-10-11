@@ -24,8 +24,6 @@ pub mod application;
 pub mod presentation;
 pub mod seeders;
 pub mod exports;
-// <<< CUSTOM MODULES
-// END CUSTOM
 
 // The module's extension (hand-written; ADR-0031).
 #[path = "lib.ext.rs"]
@@ -88,8 +86,6 @@ pub struct SurveyModule {
     pub(crate) survey_user_input_predefined_question_service: Arc<SurveyUserInputPredefinedQuestionService>,
     /// The module's extension state (`lib.ext.rs`); its fields read through `Deref`.
     pub(crate) ext: ModuleExt,
-    // <<< CUSTOM FIELDS
-    // END CUSTOM
 }
 
 impl std::ops::Deref for SurveyModule {
@@ -208,8 +204,6 @@ impl SurveyModule {
             .merge(create_survey_user_input_predefined_question_read_routes(self.survey_user_input_predefined_question_service.clone()))
     }
 
-    // <<< CUSTOM METHODS
-    // END CUSTOM
 }
 
 /// Builder for SurveyModule
@@ -217,8 +211,6 @@ pub struct SurveyModuleBuilder {
     db_pool: Option<PgPool>,
     /// The builder's extension state (`lib.ext.rs`); its fields read through `Deref`.
     ext: ModuleBuilderExt,
-    // <<< CUSTOM BUILDER FIELDS
-    // END CUSTOM
 }
 
 impl std::ops::Deref for SurveyModuleBuilder {
@@ -240,8 +232,6 @@ impl SurveyModuleBuilder {
         Self {
             db_pool: None,
             ext: Default::default(),
-            // <<< CUSTOM BUILDER DEFAULTS
-            // END CUSTOM
         }
     }
 
@@ -251,8 +241,6 @@ impl SurveyModuleBuilder {
         self
     }
 
-    // <<< CUSTOM - custom builder methods
-    // END CUSTOM
 
     /// Build the module with configured dependencies
     pub fn build(self) -> anyhow::Result<SurveyModule> {
@@ -295,8 +283,6 @@ impl SurveyModuleBuilder {
         let survey_user_input_predefined_question_repository = Arc::new(SurveyUserInputPredefinedQuestionRepository::new(db_pool.clone()));
         let survey_user_input_predefined_question_service = Arc::new(SurveyUserInputPredefinedQuestionService::with_repository(survey_user_input_predefined_question_repository.clone()));
 
-        // <<< CUSTOM
-        // END CUSTOM
 
         // The extension builds its own state from what the generated build made.
         let ext = self.ext.build(&ModuleParts {
@@ -332,8 +318,6 @@ impl SurveyModuleBuilder {
             user_input_line_service,
             survey_user_input_predefined_question_service,
             ext,
-            // <<< CUSTOM
-            // END CUSTOM
         })
     }
 }

@@ -18,5 +18,3 @@ use crate::domain::entity::Question;
 /// service. `PermitAllPolicy` is the safe default until then.
 pub type QuestionDomainPolicy = PermitAllPolicy<Question>;
 
-// <<< CUSTOM
-// END CUSTOM

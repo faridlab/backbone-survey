@@ -11,8 +11,6 @@ use crate::domain::entity::SurveySurveyLang;
 /// enum containing a `Crud(CrudEvent<SurveySurveyLang>)` variant.
 pub type SurveySurveyLangEvent = CrudEvent<SurveySurveyLang>;
 
-// <<< CUSTOM
-// END CUSTOM
 
 use backbone_messaging::{CrudEventPublisher, NoOpCrudEventPublisher};
 use std::sync::Arc;

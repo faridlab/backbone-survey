@@ -11,8 +11,6 @@ use crate::domain::entity::SurveyQuestionTriggeringAnswer;
 /// enum containing a `Crud(CrudEvent<SurveyQuestionTriggeringAnswer>)` variant.
 pub type SurveyQuestionTriggeringAnswerEvent = CrudEvent<SurveyQuestionTriggeringAnswer>;
 
-// <<< CUSTOM
-// END CUSTOM
 
 use backbone_messaging::{CrudEventPublisher, NoOpCrudEventPublisher};
 use std::sync::Arc;

@@ -18,5 +18,3 @@ use crate::domain::entity::SurveySurveyRestrictUser;
 /// service. `PermitAllPolicy` is the safe default until then.
 pub type SurveySurveyRestrictUserDomainPolicy = PermitAllPolicy<SurveySurveyRestrictUser>;
 
-// <<< CUSTOM
-// END CUSTOM

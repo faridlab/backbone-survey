@@ -236,7 +236,7 @@ impl backbone_core::ApplyUpdateDto<UpdateSurveySurveyLangDto> for SurveySurveyLa
 // Custom DTOs
 // =============================================================================
 
-// <<< CUSTOM DTOs
 // Add custom DTOs specific to SurveySurveyLang here.
 // This section will be preserved during regeneration.
 // >>> END CUSTOM DTOs
+

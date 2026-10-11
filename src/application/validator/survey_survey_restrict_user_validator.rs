@@ -14,10 +14,6 @@ pub type SurveySurveyRestrictUserValidator = EntityValidator<SurveySurveyRestric
 /// Build a validator for SurveySurveyRestrictUser with all schema-defined field rules.
 pub fn survey_survey_restrict_user_validator() -> SurveySurveyRestrictUserValidator {
     EntityValidator::new()
-    // <<< CUSTOM RULES
-    // END CUSTOM RULES
         // No schema-derived rules — add custom rules above.
 }
 
-// <<< CUSTOM
-// END CUSTOM

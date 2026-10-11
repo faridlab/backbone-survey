@@ -14,10 +14,6 @@ pub type SurveyUserInputPredefinedQuestionValidator = EntityValidator<SurveyUser
 /// Build a validator for SurveyUserInputPredefinedQuestion with all schema-defined field rules.
 pub fn survey_user_input_predefined_question_validator() -> SurveyUserInputPredefinedQuestionValidator {
     EntityValidator::new()
-    // <<< CUSTOM RULES
-    // END CUSTOM RULES
         // No schema-derived rules — add custom rules above.
 }
 
-// <<< CUSTOM
-// END CUSTOM

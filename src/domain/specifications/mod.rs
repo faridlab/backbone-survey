@@ -16,5 +16,3 @@ pub mod user_input_specification;
 pub mod user_input_line_specification;
 pub mod survey_user_input_predefined_question_specification;
 
-// <<< CUSTOM
-// END CUSTOM

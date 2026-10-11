@@ -22,5 +22,3 @@ pub use user_input_domain_policy::UserInputDomainPolicy;
 pub use user_input_line_domain_policy::UserInputLineDomainPolicy;
 pub use survey_user_input_predefined_question_domain_policy::SurveyUserInputPredefinedQuestionDomainPolicy;
 
-// <<< CUSTOM
-// END CUSTOM

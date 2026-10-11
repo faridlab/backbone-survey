@@ -17,8 +17,6 @@ pub mod user_input_service;
 pub mod user_input_line_service;
 pub mod survey_user_input_predefined_question_service;
 
-// <<< CUSTOM
-// END CUSTOM
 
 pub use question_service::QuestionService;
 pub use question_answer_service::QuestionAnswerService;
@@ -29,8 +27,6 @@ pub use survey_survey_lang_service::SurveySurveyLangService;
 pub use user_input_service::UserInputService;
 pub use user_input_line_service::UserInputLineService;
 pub use survey_user_input_predefined_question_service::SurveyUserInputPredefinedQuestionService;
-// <<< CUSTOM
-// END CUSTOM
 
 // This directory's extension (hand-written; ADR-0031).
 include!("mod.ext.rs");

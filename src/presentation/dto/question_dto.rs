@@ -751,7 +751,7 @@ impl backbone_core::ApplyUpdateDto<UpdateQuestionDto> for Question {
 // Custom DTOs
 // =============================================================================
 
-// <<< CUSTOM DTOs
 // Add custom DTOs specific to Question here.
 // This section will be preserved during regeneration.
 // >>> END CUSTOM DTOs
+

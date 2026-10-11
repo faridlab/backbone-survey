@@ -32,5 +32,3 @@ pub type QuestionAnswerService = GenericCrudService<
     QuestionAnswerRepository,
 >;
 
-// <<< CUSTOM
-// END CUSTOM

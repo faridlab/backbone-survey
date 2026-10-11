@@ -18,9 +18,5 @@ pub fn question_answer_validator() -> QuestionAnswerValidator {
         .rule(OptionalNotBlank::new("value", |e: &QuestionAnswer| e.value.as_deref()))
         .rule(OptionalNotBlank::new("value_image", |e: &QuestionAnswer| e.value_image.as_deref()))
         .rule(OptionalNotBlank::new("value_image_filename", |e: &QuestionAnswer| e.value_image_filename.as_deref()))
-    // <<< CUSTOM RULES
-    // END CUSTOM RULES
 }
 
-// <<< CUSTOM
-// END CUSTOM
