@@ -1,25 +1,14 @@
 # The rule ratchet (schema doctor): these counts may only go down. Regenerate with
 # `metaphor schema rules . --update-baseline` after enforcing a rule.
-unenforced: 18
-warnings: 1
+unenforced: 7
+warnings: 0
 machines_without_verbs: 0
 untested_rule_ids: 18
 unenforced_rules:
 - 'survey.hook.yaml: anti_cheat_windows'
-- 'survey.hook.yaml: attempt_state_monotonic'
 - 'survey.hook.yaml: attempt_token_capability'
-- 'survey.hook.yaml: badge_key_globally_unique'
-- 'survey.hook.yaml: certification_port_fail_closed'
 - 'survey.hook.yaml: certification_publication_gate'
 - 'survey.hook.yaml: denominator_frozen'
-- 'survey.hook.yaml: end_datetime_stamped_once'
 - 'survey.hook.yaml: intake_storage_contract'
-- 'survey.hook.yaml: nonce_unique_among_live'
-- 'survey.hook.yaml: question_answer_score_nonnegative'
-- 'survey.hook.yaml: question_delete_blocked_live'
 - 'survey.hook.yaml: score_drift_refused'
-- 'survey.hook.yaml: session_advance_locked'
-- 'survey.hook.yaml: session_code_exhaustion_loud'
 - 'survey.hook.yaml: session_code_lockout'
-- 'survey.hook.yaml: session_end_bulk_done_forward_only'
-- 'survey.hook.yaml: token_rotation_atomic'

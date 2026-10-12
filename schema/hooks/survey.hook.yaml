@@ -41,10 +41,13 @@ rules:
 
   - id: R-SV1
     name: attempt_state_monotonic
+    entity: UserInput
     when: update user_input
     assert: "state edges only advance new -> in_progress -> done. Service first line: state-guarded conditional UPDATEs (... WHERE id = $1 AND state = $expected; zero rows -> typed StateConflict). DB backstop: the hand *monotonic* migration's BEFORE UPDATE trigger raises survey_input_state_not_monotonic on ANY backward edge — covering raw SQL, the session-end bulk write, and batch tools (deliberate strengthening beyond Odoo's controller-only check)"
     error_code: survey_input_state_not_monotonic
+    enforced_by: "migrations/20260831000001_survey_input_monotonic_guard.up.sql::survey_input_monotonic_guard, src/infrastructure/persistence/attempt_repository.rs::transition_begin, src/infrastructure/persistence/attempt_repository.rs::transition_done, src/infrastructure/persistence/survey_session_repository.rs::bulk_done_attendees"
     enforcement: both
+    justification: "The trigger refuses a backward move on UPDATE, answering 500, not this code; an INSERT may set any state."
     # Why a trigger and not a partial UNIQUE: a partial unique expresses
     # at-most-one-per-key (right for grant keys / live-token uniqueness),
     # not a per-row directional transition; a CHECK cannot see the prior
@@ -52,9 +55,11 @@ rules:
 
   - id: R-SV2
     name: end_datetime_stamped_once
+    entity: UserInput
     when: mark done
     assert: "end_datetime is stamped ONLY on the -> done edge by the same conditional UPDATE that writes state — a double mark_done is a no-op refusal (zero rows), never a timestamp rewrite"
     error_code: attempt_not_doneable
+    enforced_by: "src/infrastructure/persistence/attempt_repository.rs::transition_done, src/infrastructure/persistence/survey_session_repository.rs::bulk_done_attendees"
     enforcement: service
     justification: "One conditional UPDATE writes the state and the stamp together, and a repeat arrives as zero rows rather than as a rewritten timestamp. Splitting that into a guard means reading before writing, which is the race the single statement removes."
 
@@ -62,73 +67,87 @@ rules:
 
   - id: R-SV3
     name: attempt_token_capability
+    entity: UserInput
     when: begin, submit, next, certification read
     assert: "authorization = the per-attempt capability: nonce selector + mandatory expiry + HMAC MAC over (id, nonce, grant, exp), constant-time compared; MULTI-use within the attempt until state = done or expiry. Unknown / expired / malformed / wrong-state answers share ONE refusal body (no enumeration oracle); expiry is a typed 410; the clock is UTC (SV-B1)"
     error_code: attempt_not_submittable
     enforcement: service
-    justification: "A capability is verified by recomputing an HMAC over the request in constant time against a nonce and an expiry. There is no stored secret to constrain, and comparing in constant time is a property of the code doing the comparison."
+    justification: "PARTLY: the capability's MAC and expiry hold, but verify_capability's done check commits before submit_answer re-reads the attempt unlocked, so a submit racing a finish writes lines and rescores a finished attempt; the certification read is refused after done."
     # service-only justification: the MAC is code over stored columns; no
     # row-level CHECK can express "this MAC recomputes". The nonce's
     # partial-UNIQUE among live rows (hardening migration) is the DB arm.
 
   - id: R-SV4
     name: token_rotation_atomic
+    entity: UserInput
     when: rotate token, resend invitation
     assert: "rotation mints a fresh nonce + expiry and kills the old one in ONE transaction — the old nonce dies atomically; there is never a window where both live"
     error_code: rotation_conflict
+    enforced_by: "src/infrastructure/persistence/attempt_repository.rs::rotate_nonce, src/application/service/attempt_service.rs::rotate_token"
     enforcement: service
-    justification: "The guarantee is that the old nonce dies in the same transaction the new one is born in, so no window exists where both are valid. That is a statement about a transaction boundary, not about any row's contents."
+    justification: "One conditional UPDATE; the composing service does not fence rotate-token by tenant."
 
   - id: R-SV5
     name: nonce_unique_among_live
+    entity: UserInput
     when: mint attempt, rotate
     assert: "UNIQUE(token_nonce) among live rows — the hardening migration's partial UNIQUE (fires on raw SQL)"
     error_code: duplicate_live_nonce
+    enforced_by: "migrations/20260831000002_survey_hardening.up.sql::idx_user_inputs_token_nonce_live"
     enforcement: db
 
   # ---- the Tier B session code (SV-B12; the attendance lockout precedent) --
 
   - id: R-SV6
     name: session_code_exhaustion_loud
+    entity: Survey
     when: arm session
     assert: "code generation grows 4 -> 9 digits on collision and FAILS LOUDLY at 9 (typed SessionCodeExhausted) — the upstream False-emitting generator does not port. Uniqueness is the partial UNIQUE among non-null rows (SV-S2)"
     error_code: session_code_exhausted
+    enforced_by: "src/application/service/survey_write_service.rs::arm_session, migrations/20260426220001_create_survey_table.up.sql::idx_survey_surveys_session_code"
     enforcement: both
+    justification: "Exhaustion of the 4..9 digit ladder refuses loud; a concurrent collision answers 500 instead of moving to a longer code, and an ended session keeps its code."
 
   - id: R-SV7
     name: session_code_lockout
+    entity: Survey
     when: code verify, join
     assert: "per-identity AND per-IP counters: 3 consecutive failures -> 30 s lock, doubling per extra failure, 15 min cap, 1 s minimum spacing; success resets. Wrong code and unknown code share one answer (no oracle). Constants are named pub consts with a pure lockout_until()"
     error_code: code_verify_locked
     enforcement: service
-    justification: "Rate limiting over per-identity and per-IP counters with a doubling backoff. The inputs are request facts that never reach a row, and the shared refusal for wrong and unknown codes exists so the response cannot be used as an oracle."
+    justification: "NOT EFFECTIVE: the lockout counts per code, keyed on a body-supplied identity and the client's own forwarded-for, and the public session preview answers live codes without counting, so the 4-digit space can be walked."
 
   # ---- scoring: the frozen denominator + the loud drift refusal -------------
 
   - id: R-SV8
     name: denominator_frozen
+    entity: SurveyUserInputPredefinedQuestion
     when: create input, score
     assert: "the scoring service reads ONLY the input's predefined_question_ids snapshot (taken at create; random per section when selected); later survey edits NEVER change existing scores; mark_done prunes inactive conditional questions from the snapshot"
     error_code: denominator_violation
     enforcement: service
-    justification: "Scoring reads the question snapshot taken when the attempt was created, so later edits to the survey cannot move an existing score. Freezing the denominator is about which set the scorer reads, not about what any row may contain."
+    justification: "PARTLY: the denominator is snapshotted, but line scores use the live question and label scores, and random-per-section sampling takes every question."
     # service-only justification: "which rows the scorer reads" is code; the
     # snapshot's existence is data (the junction table).
 
   - id: R-SV9
     name: score_drift_refused
+    entity: UserInputLine
     when: update user_input_line
     assert: "answer_score / answer_is_correct / speed_seconds are written ONCE at submit. Any later change to them on a graded line is refused: the typed SurveyWriteError::ScoreDriftRefused on the service path, and the hand *monotonic* migration's BEFORE UPDATE trigger raises survey_score_drift_refused on the raw-SQL path (outside the regrade marker). The ONLY sanctioned recompute is the guarded regrade_question verb, which works from the STORED speed_seconds and value columns — never a fresh now()"
     error_code: survey_score_drift_refused
     enforcement: both
+    justification: "PARTLY: the drift trigger refuses an in-place change outside regrade (as 500), but delete-and-insert passes it, and regrade_question wipes choice and matrix scores and re-times speed against the current cursor."
     # The SV-B2 "fixed loudly" mandate: never a silent overwrite, never a
     # silent re-derivation.
 
   - id: R-SV10
     name: question_answer_score_nonnegative
+    entity: Question
     when: create, update question
     assert: "QUESTION-level answer_score >= 0 (SV-S10) — the ANSWER-level field deliberately allows negatives (penalty scoring)"
     error_code: negative_question_score
+    enforced_by: "migrations/20260831000002_survey_hardening.up.sql::chk_questions_answer_score_nonneg"
     enforcement: db
     # The CHECK rides the hand hardening migration (the DSL cannot order it
     # against the clamp cluster).
@@ -137,71 +156,85 @@ rules:
 
   - id: R-SV11
     name: anti_cheat_windows
+    entity: UserInput
     when: submit
     assert: "attempt pre-creation precedes any submit (the row exists first — THE anti-cheat); _has_attempts_left is the pool self-join (same survey + done + not-test + shared-or-null invite_token + same partner-or-email) flushed in the caller's transaction; time limits compare in UTC with the +10 s survey / +3 s question graces against the STORED clocks"
     error_code: attempt_not_allowed
     enforcement: service
-    justification: "The pool check is a self-join over the attempt history, taken before a submit is allowed to exist. It is an aggregate over other rows, and the ordering (the attempt row first, then anything else) is what makes it an anti-cheat rather than a tally."
+    justification: "BYPASSABLE: the attempt limit counts only finished attempts and gates only at mint, so several can be minted before any finishes; the public start pools by a body-supplied email, so omitting it gives unlimited attempts."
 
   - id: R-SV12
     name: intake_storage_contract
+    entity: UserInputLine
     when: submit
     assert: "scalar types UPSERT in place; choice and matrix DELETE-AND-RECREATE; an empty choice answer materializes a SKIPPED line; comments are ALWAYS char_box + value_char_box; save_as_email / save_as_nickname side-write the INPUT row; overwrite_existing is gated on users_can_go_back / save_as_* and refused loudly otherwise; inactive conditional answers are CLEARED (dependent lines deleted) at submit — scoring correctness over UX"
     error_code: intake_contract_violation
     enforcement: service
-    justification: "Different answer types are stored by different strategies, one upserting in place and another deleting and recreating, with a skipped line materialised for an empty choice. That is a write-path contract; a constraint can only see the rows each strategy leaves behind."
+    justification: "PARTLY: choice and matrix answers are not de-duplicated and every label line is scored, so repeating a label inflates the score past 100 percent; two concurrent scalar submits both insert; an empty choice leaves earlier lines and conditionals in place."
 
   # ---- session: the advance lock + the bulk-done bypass fence ---------------
 
   - id: R-SV13
     name: session_advance_locked
+    entity: Survey
     when: session next
     assert: "the advance verb takes SELECT ... FOR UPDATE on the survey row (or an equivalent conditional UPDATE on the cursor): exactly one cursor move, one clock stamp, one push per advance (SV-B4 fixed — the read-modify-write race is closed)"
     error_code: advance_conflict
+    enforced_by: "src/application/service/survey_write_service.rs::advance_session, src/infrastructure/persistence/survey_session_repository.rs::lock_survey_for_update, src/infrastructure/persistence/survey_session_repository.rs::advance_cursor"
     enforcement: service
     justification: "The lock is what makes the advance exactly one cursor move, one clock stamp and one push. Holding it is the verb's job, and a constraint on the cursor row could not tell a legitimate advance from a duplicated one."
 
   - id: R-SV14
     name: session_end_bulk_done_forward_only
+    entity: Survey
     when: session end
     assert: "the end verb bulk-moves attendees to done via the monotonic-safe conditional UPDATE (forward-only — passes the guard by construction) and deliberately does NOT run the certification funnel (upstream TR-SV-7 kept). The bypass can never skip a certification: arm_session refuses certification-bearing surveys with the typed SessionCertificationConflict before any code is minted, and the survey_session_certification_disjoint CHECK stamps the same disjointness at the database (probe-asserted by p10b: refusal + control arm + CHECK 23514)"
     error_code: session_end_conflict
+    enforced_by: "src/infrastructure/persistence/survey_session_repository.rs::bulk_done_attendees, src/application/service/survey_write_service.rs::end_session, src/application/service/survey_write_service.rs::arm_session, migrations/20260831000003_survey_session_certification_disjoint.up.sql::survey_session_certification_disjoint"
     enforcement: service
     justification: "The end verb moves attendees forward in bulk and deliberately does not run the certification pass. Both halves are decisions about what this verb does, which is not something a row can carry."
 
   - id: R-SV15
     name: question_delete_blocked_live
+    entity: Question
     when: delete question
     assert: "DELETE of a survey's questions is refused while session_state = 'in_progress' (SV-D1) — the hand hardening migration's BEFORE DELETE trigger fires on raw SQL too (a mid-session delete corrupts the running cursor)"
     error_code: question_delete_refused_live_session
+    enforced_by: "migrations/20260831000002_survey_hardening.up.sql::survey_question_delete_in_session"
     enforcement: both
+    justification: "Database only, despite enforcement both: a hard delete is refused (as 500), a soft delete passes; the composing service mounts no question writer."
 
   # ---- certification: the publication gate -----------------------------------
 
   - id: R-SV16
     name: certification_publication_gate
+    entity: UserInput
     when: mark done
     assert: "publish iff certification AND certification_give_badge AND scoring_success AND user_id IS NOT NULL AND NOT test_entry — and ONLY on the FIRST successful completion in the attempt pool (producer-side once-per-user; SPEC.md §7.1). A NULL user_id at the gate is a config violation: the fact is NOT published, a typed audit record is written (survey_certification_grant_refused), and the funnel continues — never a silent drop"
     error_code: certification_grant_refused
     enforcement: service
-    justification: "The gate reads five conditions across the input and its attempt pool, including that this is the first successful completion. A CHECK sees one row and cannot know whether an earlier attempt already published."
+    justification: "PARTLY: the first-success check runs after commit without a lock, pools by a body-supplied email rather than the user, and the grant key is per attempt, so a certification can be published more than once per user."
 
   - id: R-SV17
     name: certification_port_fail_closed
+    entity: UserInput
     when: certification publish
     assert: "no CertificationGrantPort composed -> every certification completion fails LOUDLY with CertificationGrantError::NotComposed (audited, isolated per input) — never a silent no-grant. The publication runs POST-COMMIT of the mark_done transaction (a grant must never ride a rollback); redelivery safety is the consumer's grant_key"
     error_code: certification_grant_not_composed
+    enforced_by: "src/application/service/certification_port.rs::certification_passed, src/application/service/certification_port.rs::install, src/application/service/intake_service.rs::finish"
     enforcement: service
-    justification: "With no grant port composed, every completion must fail loudly and be audited rather than pass silently. That is a composition posture, and a database has no notion of a port that was never wired."
+    justification: "Fails closed when no grant is composed; the audit is a log line, not a row."
 
   - id: R-SV18
     name: badge_key_globally_unique
+    entity: Survey
     when: create, update survey
     assert: "UNIQUE(certification_badge_key) among non-null rows — one badge is the certification badge of at most one survey, ever (SV-S7, the _badge_uniq 1:1); fires on raw SQL via the hardening migration"
     error_code: duplicate_certification_badge
+    enforced_by: "migrations/20260426220001_create_survey_table.up.sql::idx_survey_surveys_certification_badge_key"
     enforcement: db
 
-triggers: []
+# triggers: [] — not read by the generator in a list-format hook file
 # (none at the ORM layer — upstream's create/write side-effect ladder does
 #  not port: the clamp cluster is write-path code, and the DB-level guards
 #  live in the hand *monotonic* / *hardening* migrations as triggers the
