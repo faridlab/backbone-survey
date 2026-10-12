@@ -231,7 +231,9 @@ async fn p08_conditional_edge() {
     let svc = Svc::new(db.pool.clone());
     let (survey_id, token) = seed_survey_opts(&db.pool, "no_scoring", 80.0, None, None, true, None).await;
 
-    let parent = seed_question(&db.pool, survey_id, 10, "simple_choice", 1.0, false).await;
+    // Multiple choice: the scenario broadens the answer to two labels, which a simple choice
+    // refuses.
+    let parent = seed_question(&db.pool, survey_id, 10, "multiple_choice", 1.0, false).await;
     let label_a = seed_label(&db.pool, parent, "A", false, 0.0).await;
     let label_b = seed_label(&db.pool, parent, "B", false, 0.0).await;
     let dep_a = seed_question(&db.pool, survey_id, 20, "char_box", 1.0, false).await;

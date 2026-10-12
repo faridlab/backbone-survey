@@ -149,7 +149,7 @@ impl IntakeService {
     /// a finished one refuses.
     pub async fn begin(&self, link: &str) -> Result<UserInput, SurveyWriteError> {
         let head = self.attempts.verify_capability(link).await?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let survey = SurveySessionRepository::find_survey_by_id(&mut tx, head.survey_id)
             .await?
             .ok_or(SurveyWriteError::SurveyNotFound(head.survey_id))?;
@@ -189,12 +189,17 @@ impl IntakeService {
         draft: AnswerDraft,
     ) -> Result<SubmitOutcome, SurveyWriteError> {
         let head = self.attempts.verify_capability(link).await?;
-        let now = Utc::now();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
 
-        let input = AttemptRepository::find_live_by_id(&mut tx, head.id)
+        // The attempt row lock serializes this attempt's submits and its finish: two identical
+        // submits cannot both insert, and a submit that lost the race to the finish sees `done`.
+        let input = AttemptRepository::find_live_by_id_for_update(&mut tx, head.id)
             .await?
             .ok_or(SurveyWriteError::InputNotFound(head.id))?;
+        if input.state == crate::domain::entity::SurveyInputState::Done {
+            return Err(SurveyWriteError::AttemptNotSubmittable);
+        }
+        let now = Utc::now();
         let survey = SurveySessionRepository::find_survey_by_id(&mut tx, input.survey_id)
             .await?
             .ok_or(SurveyWriteError::SurveyNotFound(input.survey_id))?;
@@ -314,46 +319,47 @@ impl IntakeService {
         };
 
         let answers = ScoringRepository::answers_for_question(&mut tx, question.id).await?;
+        let matrix_rows = if matches!(draft, AnswerDraft::Matrix(_)) {
+            ScoringRepository::matrix_rows_for_question(&mut tx, question.id).await?
+        } else {
+            Vec::new()
+        };
+        let draft = normalize_set_draft(&question, &answers, &matrix_rows, draft)?;
         let ctx = GradeContext { survey: &survey, input: &input, question: &question, answers: &answers, now };
         let value = draft.value();
         let raw = ScoringService::raw_grade(&ctx, &value);
         let graded = ScoringService::grade(&ctx, &value);
+        let factor = ScoringService::applied_speed_factor(&ctx, &raw);
 
         match &draft {
             AnswerDraft::Choice(chosen) if !chosen.is_empty() => {
                 ScoringRepository::delete_question_lines(&mut tx, input.id, question.id).await?;
-                let ratio = line_ratio(raw.answer_score, graded.answer_score);
-                for label_id in chosen {
-                    let label = answers.iter().find(|a: &&QuestionAnswer| a.id == *label_id);
-                    let (w, correct) = match label {
-                        Some(a) => (ScoringService::answer_weight(a, &question), a.is_correct),
-                        None => (0.0, false),
-                    };
-                    ScoringRepository::insert_line(
+                for line in ScoringService::set_lines(&ctx, &value, &graded) {
+                    let row = ScoringRepository::insert_line(
                         &mut tx, Uuid::new_v4(), input.id, survey.id, question.id,
-                        Some(*label_id), None, false, Some(SurveyAnswerType::Suggestion),
+                        Some(line.label_id), None, false, Some(SurveyAnswerType::Suggestion),
                         None, None, None, None, None, None,
-                        Some(w * ratio), Some(correct), graded.speed_seconds, now,
+                        line.score, Some(line.correct), graded.speed_seconds, now,
                     )
                     .await?;
+                    if let Some(f) = factor {
+                        ScoringRepository::record_speed_factor(&mut tx, row.id, f).await?;
+                    }
                 }
             }
             AnswerDraft::Matrix(cells) if !cells.is_empty() => {
                 ScoringRepository::delete_question_lines(&mut tx, input.id, question.id).await?;
-                let ratio = line_ratio(raw.answer_score, graded.answer_score);
-                for (row_id, col_id) in cells {
-                    let col = answers.iter().find(|a| a.id == *col_id);
-                    let (w, correct) = match col {
-                        Some(a) => (ScoringService::answer_weight(a, &question), a.is_correct),
-                        None => (0.0, false),
-                    };
-                    ScoringRepository::insert_line(
+                for line in ScoringService::set_lines(&ctx, &value, &graded) {
+                    let row = ScoringRepository::insert_line(
                         &mut tx, Uuid::new_v4(), input.id, survey.id, question.id,
-                        Some(*col_id), Some(*row_id), false, Some(SurveyAnswerType::Suggestion),
+                        Some(line.label_id), line.matrix_row_id, false, Some(SurveyAnswerType::Suggestion),
                         None, None, None, None, None, None,
-                        Some(w * ratio), Some(correct), graded.speed_seconds, now,
+                        line.score, Some(line.correct), graded.speed_seconds, now,
                     )
                     .await?;
+                    if let Some(f) = factor {
+                        ScoringRepository::record_speed_factor(&mut tx, row.id, f).await?;
+                    }
                 }
             }
             scalar_or_skip => {
@@ -369,13 +375,16 @@ impl IntakeService {
                     )
                     .await?;
                 } else {
-                    ScoringRepository::insert_line(
+                    let row = ScoringRepository::insert_line(
                         &mut tx, Uuid::new_v4(), input.id, survey.id, question.id,
                         None, None, draft.is_skipped(), draft.answer_type(),
                         ch, tx_, num, scale, date, dt,
                         graded.answer_score, graded.answer_is_correct, graded.speed_seconds, now,
                     )
                     .await?;
+                    if let Some(f) = factor {
+                        ScoringRepository::record_speed_factor(&mut tx, row.id, f).await?;
+                    }
                 }
             }
         }
@@ -415,12 +424,11 @@ impl IntakeService {
     /// Finish the attempt (`in_progress -> done`), recompute the final
     /// totals, then publish post-commit with per-input isolation: the
     /// completion fact on the sink, the certification fact on the port
-    /// (gated to the FIRST success in the attempt pool — the producer
-    /// half of exactly-once; the consumer's idempotency key is the
-    /// other).
+    /// (keyed per certification and user, so the consumer's idempotency key
+    /// grants a user once however many attempts pass).
     pub async fn finish(&self, link: &str) -> Result<UserInput, SurveyWriteError> {
         let head = self.attempts.verify_capability(link).await?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let mut input = AttemptRepository::find_live_by_id(&mut tx, head.id)
             .await?
             .ok_or(SurveyWriteError::InputNotFound(head.id))?;
@@ -467,46 +475,29 @@ impl IntakeService {
             && !final_row.test_entry
         {
             if let Some(user_id) = final_row.user_id {
-                let mut gate_conn = self.pool.acquire().await?;
-                match AttemptRepository::pool_count(
-                    &mut gate_conn,
-                    survey.id,
-                    final_row.invite_token.as_deref(),
-                    final_row.partner_id,
-                    final_row.email.as_deref(),
-                    Some(final_row.id),
-                    true,
-                )
-                .await
-                {
-                    Ok(prior) if prior == 0 => {
-                        let fact = CertificationFact::new(
-                            survey.id,
-                            final_row.id,
-                            user_id,
-                            survey.certification_badge_key.clone().unwrap_or_default(),
-                        );
-                        if let Err(cause) =
-                            self.certification.certification_passed(&fact).await
-                        {
-                            // Audited critical event; the completion stands.
-                            tracing::error!(
-                                event = "survey_certification_grant_refused",
-                                survey_id = %survey.id,
-                                input_id = %final_row.id,
-                                error = %cause,
-                                "certification publish refused"
-                            );
-                        }
-                    }
-                    Ok(_) => {} // a prior success exists: first-completion only
-                    Err(e) => {
+                let badge_key = survey.certification_badge_key.clone().unwrap_or_default();
+                if badge_key.trim().is_empty() {
+                    // A certification with no badge configured cannot grant one; publishing
+                    // an empty key would only be refused downstream.
+                    tracing::error!(
+                        event = "survey_certification_grant_refused",
+                        survey_id = %survey.id,
+                        input_id = %final_row.id,
+                        "certification survey has no badge key; nothing to grant"
+                    );
+                } else {
+                    // Once per user: the grant is keyed on the certification and the user, so
+                    // the consumer's grant-key unique turns every later success of the same
+                    // user (a retake, a concurrent finish) into the same grant.
+                    let fact = CertificationFact::for_user(survey.id, user_id, badge_key);
+                    if let Err(cause) = self.certification.certification_passed(&fact).await {
+                        // Audited critical event; the completion stands.
                         tracing::error!(
                             event = "survey_certification_grant_refused",
                             survey_id = %survey.id,
                             input_id = %final_row.id,
-                            error = %e,
-                            "certification gate could not read the attempt pool"
+                            error = %cause,
+                            "certification publish refused"
                         );
                     }
                 }
@@ -532,13 +523,67 @@ impl IntakeService {
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-/// The speed-scale ratio between the graded and raw sums for per-line
-/// distribution (1.0 when speed did not apply; 0.0-sum stays 0).
-fn line_ratio(raw: Option<f64>, graded: Option<f64>) -> f64 {
-    match (raw, graded) {
-        (Some(r), Some(g)) if r != 0.0 => g / r,
-        (Some(_), Some(_)) => 0.0,
-        _ => 1.0,
+/// Check a choice or matrix answer against the question before it is graded or stored:
+/// every label must be one of this question's own (a column, for a matrix, and a row label
+/// for its row), a label is counted once however often it is sent, a simple choice names one
+/// label and a simple matrix one column per row. Scalar drafts pass through untouched.
+fn normalize_set_draft(
+    question: &Question,
+    answers: &[QuestionAnswer],
+    matrix_rows: &[Uuid],
+    draft: AnswerDraft,
+) -> Result<AnswerDraft, SurveyWriteError> {
+    use crate::domain::entity::{SurveyMatrixSubtype, SurveyQuestionType};
+    let refuse = |reason: &str| SurveyWriteError::ValidationFailed {
+        question_id: question.id,
+        reason: reason.to_string(),
+    };
+    let is_label = |id: &Uuid| answers.iter().any(|a| a.id == *id);
+    match draft {
+        AnswerDraft::Choice(ids) => {
+            if !matches!(
+                question.question_type,
+                Some(SurveyQuestionType::SimpleChoice) | Some(SurveyQuestionType::MultipleChoice)
+            ) {
+                return Err(refuse("this question does not take a choice answer"));
+            }
+            let mut chosen: Vec<Uuid> = Vec::with_capacity(ids.len());
+            for id in ids {
+                if !is_label(&id) {
+                    return Err(refuse("a chosen label does not belong to this question"));
+                }
+                if !chosen.contains(&id) {
+                    chosen.push(id);
+                }
+            }
+            if question.question_type == Some(SurveyQuestionType::SimpleChoice) && chosen.len() > 1 {
+                return Err(refuse("a single-choice question takes one label"));
+            }
+            Ok(AnswerDraft::Choice(chosen))
+        }
+        AnswerDraft::Matrix(cells) => {
+            if question.question_type != Some(SurveyQuestionType::Matrix) {
+                return Err(refuse("this question does not take a matrix answer"));
+            }
+            let mut kept: Vec<(Uuid, Uuid)> = Vec::with_capacity(cells.len());
+            for (row, col) in cells {
+                if !matrix_rows.contains(&row) {
+                    return Err(refuse("a matrix row does not belong to this question"));
+                }
+                if !is_label(&col) {
+                    return Err(refuse("a matrix column does not belong to this question"));
+                }
+                if kept.contains(&(row, col)) {
+                    continue;
+                }
+                if question.matrix_subtype == SurveyMatrixSubtype::Simple && kept.iter().any(|(r, _)| *r == row) {
+                    return Err(refuse("a single-choice matrix takes one column per row"));
+                }
+                kept.push((row, col));
+            }
+            Ok(AnswerDraft::Matrix(kept))
+        }
+        other => Ok(other),
     }
 }
 

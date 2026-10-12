@@ -166,13 +166,13 @@ async fn p02b_code_verify_and_lockout() {
             other => panic!("wrong code must refuse the shared body, got {other:?}"),
         }
     }
-    assert_eq!(book.failures("code:0000|id:alice"), 2);
+    assert_eq!(book.failures("id:alice"), 2);
 
     // Third wrong answer: the book crosses the threshold; the FOURTH
     // attempt (even with the RIGHT code shape) hits the locked refusal.
     tokio::time::sleep(std::time::Duration::from_millis(1050)).await;
     let _ = svc.attempts.join_by_code("0000", "alice", "10.0.0.1", None).await;
-    assert_eq!(book.failures("code:0000|id:alice"), 3);
+    assert_eq!(book.failures("id:alice"), 3);
     tokio::time::sleep(std::time::Duration::from_millis(1050)).await;
     match svc.attempts.join_by_code("0000", "alice", "10.0.0.1", None).await {
         Err(SurveyWriteError::SessionCodeLocked { retry_after_seconds }) => {

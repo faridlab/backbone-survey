@@ -327,3 +327,6 @@ impl Default for SurveyModuleBuilder {
         Self::new()
     }
 }
+
+// This directory's extension (hand-written; ADR-0031).
+include!("mod.ext.rs");

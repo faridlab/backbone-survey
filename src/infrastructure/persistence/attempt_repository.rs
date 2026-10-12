@@ -57,6 +57,23 @@ impl AttemptRepository {
         .await
     }
 
+    /// The live input row by id, row-locked for the caller's transaction: every submit and the
+    /// finish of one attempt take it first, so they run one after another and a submit sees the
+    /// state a racing finish left.
+    pub async fn find_live_by_id_for_update(
+        conn: &mut PgConnection,
+        input_id: Uuid,
+    ) -> Result<Option<UserInput>, sqlx::Error> {
+        sqlx::query_as::<_, UserInput>(
+            r#"SELECT * FROM survey.survey_user_inputs
+               WHERE id = $1 AND (metadata->>'deleted_at') IS NULL
+               FOR UPDATE"#,
+        )
+        .bind(input_id)
+        .fetch_optional(&mut *conn)
+        .await
+    }
+
     /// The live input row by token nonce (the Tier A selector).
     pub async fn find_live_by_nonce(
         conn: &mut PgConnection,
@@ -292,6 +309,51 @@ impl AttemptRepository {
         .bind(email)
         .bind(exclude_input_id)
         .bind(prior_success_only)
+        .fetch_one(&mut *conn)
+        .await
+    }
+
+    /// The signed-in taker's open public attempt on a survey, if any: not finished, not a test
+    /// entry, not from an invitation, its link still valid. The newest one wins.
+    pub async fn open_public_attempt(
+        conn: &mut PgConnection,
+        survey_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Option<UserInput>, sqlx::Error> {
+        sqlx::query_as::<_, UserInput>(
+            r#"SELECT * FROM survey.survey_user_inputs
+               WHERE survey_id = $1 AND user_id = $2
+                 AND state <> 'done'
+                 AND test_entry IS NOT TRUE
+                 AND invite_token IS NULL
+                 AND token_expires_at > now()
+                 AND (metadata->>'deleted_at') IS NULL
+               ORDER BY token_expires_at DESC
+               LIMIT 1"#,
+        )
+        .bind(survey_id)
+        .bind(user_id)
+        .fetch_optional(&mut *conn)
+        .await
+    }
+
+    /// The signed-in taker's finished public attempts on a survey (the public attempt pool is
+    /// the user, never an email the caller typed).
+    pub async fn user_done_count(
+        conn: &mut PgConnection,
+        survey_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar::<_, i64>(
+            r#"SELECT count(*) FROM survey.survey_user_inputs
+               WHERE survey_id = $1 AND user_id = $2
+                 AND state = 'done'
+                 AND test_entry IS NOT TRUE
+                 AND invite_token IS NULL
+                 AND (metadata->>'deleted_at') IS NULL"#,
+        )
+        .bind(survey_id)
+        .bind(user_id)
         .fetch_one(&mut *conn)
         .await
     }

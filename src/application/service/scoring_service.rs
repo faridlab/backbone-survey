@@ -114,6 +114,15 @@ pub struct ScoreTotals {
     pub success: bool,
 }
 
+/// One stored line of a choice or matrix answer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SetLine {
+    pub label_id: Uuid,
+    pub matrix_row_id: Option<Uuid>,
+    pub score: Option<f64>,
+    pub correct: bool,
+}
+
 /// Everything one grading needs besides the value itself.
 pub struct GradeContext<'a> {
     pub survey: &'a Survey,
@@ -149,21 +158,69 @@ impl ScoringService {
     /// not the live session cursor grades at the 50 % floor (superseded).
     pub fn grade(ctx: &GradeContext<'_>, value: &AnswerValue) -> LineGrade {
         let mut grade = Self::raw_grade(ctx, value);
-        if let Some(raw) = grade.answer_score {
-            if raw > 0.0 && Self::speed_eligible(ctx) {
-                let factor = if ctx.survey.session_question_id == Some(ctx.question.id) {
-                    let elapsed = Self::elapsed_seconds(ctx);
-                    let limit = ctx.question.time_limit.unwrap_or(0).max(0) as f64;
-                    speed_factor(elapsed, limit)
-                } else {
-                    // Superseded question: exactly 50 %.
-                    0.5
-                };
-                grade.answer_score = Some(raw * factor);
-                grade.speed_seconds = Self::captured_speed_seconds(ctx);
-            }
+        if let (Some(raw), Some(factor)) = (grade.answer_score, Self::applied_speed_factor(ctx, &grade)) {
+            grade.answer_score = Some(raw * factor);
+            grade.speed_seconds = Self::captured_speed_seconds(ctx);
         }
         grade
+    }
+
+    /// The speed factor a raw grade earns at submit, if speed rating applies to it: the live
+    /// cursor question decays with the elapsed time, a superseded question earns exactly 50 %.
+    /// `None` when the raw score is not positive or the question is not speed-rated.
+    pub fn applied_speed_factor(ctx: &GradeContext<'_>, raw: &LineGrade) -> Option<f64> {
+        let positive = raw.answer_score.map_or(false, |r| r > 0.0);
+        if !positive || !Self::speed_eligible(ctx) {
+            return None;
+        }
+        Some(if ctx.survey.session_question_id == Some(ctx.question.id) {
+            let elapsed = Self::elapsed_seconds(ctx);
+            let limit = ctx.question.time_limit.unwrap_or(0).max(0) as f64;
+            speed_factor(elapsed, limit)
+        } else {
+            0.5
+        })
+    }
+
+    /// How a graded choice or matrix answer is stored: one line per chosen label (or matrix
+    /// cell), each with its share of the score. The shares sum to the graded score: a simple
+    /// choice's one label carries it whole, a multiple choice's labels carry their own weights
+    /// (penalties included), and a matrix cell carries its column's weight only when correct.
+    /// The speed factor scales every share alike. An unscored answer stores no score.
+    pub fn set_lines(ctx: &GradeContext<'_>, value: &AnswerValue, graded: &LineGrade) -> Vec<SetLine> {
+        let factor = graded.answer_score.and_then(|g| {
+            let raw = Self::raw_grade(ctx, value).answer_score.unwrap_or(0.0);
+            if raw != 0.0 { Some(g / raw) } else { Some(0.0) }
+        });
+        let label = |id: &Uuid| ctx.answers.iter().find(|a| a.id == *id);
+        match value {
+            AnswerValue::Choice(chosen) => chosen
+                .iter()
+                .map(|id| {
+                    let (weight, correct) = match label(id) {
+                        Some(a) => (Self::answer_weight(a, ctx.question), a.is_correct),
+                        None => (0.0, false),
+                    };
+                    let share = match ctx.question.question_type {
+                        Some(SurveyQuestionType::SimpleChoice) => graded.answer_score,
+                        _ => factor.map(|f| weight * f),
+                    };
+                    SetLine { label_id: *id, matrix_row_id: None, score: share, correct }
+                })
+                .collect(),
+            AnswerValue::Matrix(cells) => cells
+                .iter()
+                .map(|(row, col)| {
+                    let (weight, correct) = match label(col) {
+                        Some(a) => (Self::answer_weight(a, ctx.question), a.is_correct),
+                        None => (0.0, false),
+                    };
+                    let share = factor.map(|f| if correct { weight * f } else { 0.0 });
+                    SetLine { label_id: *col, matrix_row_id: Some(*row), score: share, correct }
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
     }
 
     /// Raw (pre-speed) weight + correctness by question type.
@@ -294,13 +351,17 @@ impl ScoringService {
         }
     }
 
-    /// The label row's own weight when it carries one, else the question's
-    /// (seeds mirror the upstream: labels inherit the question weight).
+    /// The label row's own weight when it carries one; an unweighted label earns the
+    /// question's weight only when it is a correct answer (seeds leave correct labels
+    /// unweighted to inherit it). A wrong unweighted label earns nothing, so choosing every
+    /// label of a multiple choice is not a full score.
     pub(crate) fn answer_weight(answer: &QuestionAnswer, question: &Question) -> f64 {
         if answer.answer_score != 0.0 {
             answer.answer_score
-        } else {
+        } else if answer.is_correct {
             question.answer_score
+        } else {
+            0.0
         }
     }
 
@@ -344,8 +405,10 @@ impl ScoringService {
             .filter(|f| f.frozen_scored)
             .map(|f| f.frozen_answer_score)
             .sum();
+        // Clamped to 0..=100: the denominator is frozen at entry, so a label weight raised
+        // mid-attempt cannot carry an attempt past a perfect score.
         let percentage =
-            if denominator > 0.0 { (100.0 * total / denominator).max(0.0) } else { 0.0 };
+            if denominator > 0.0 { (100.0 * total / denominator).clamp(0.0, 100.0) } else { 0.0 };
         ScoreTotals {
             total,
             denominator,
@@ -380,17 +443,21 @@ impl ScoringService {
     // ── the sanctioned regrade ────────────────────────────────────────────────
 
     /// The guarded `regrade_question` verb: recompute every stored line of
-    /// ONE question from the LIVE correct-answer data and the STORED value
-    /// columns + STORED `speed_seconds` (never a wall clock), under the
-    /// transaction-local regrade marker the drift trigger consults. The
-    /// old/new pair is appended to the line's metadata (`regrade_history`)
-    /// for audit. Returns (lines touched, old->new score pairs).
+    /// ONE question from the LIVE correct-answer data and the STORED values,
+    /// under the transaction-local regrade marker the drift trigger consults.
+    /// A choice or matrix answer is reassembled from all its rows (its
+    /// multiplicity lives across them) and its shares redistributed exactly
+    /// as intake stores them. The speed factor is the one recorded at submit
+    /// (never re-derived from the session cursor, which has moved on); a line
+    /// stored before the factor was recorded falls back to its stored
+    /// `speed_seconds`. The old/new pair is appended to each line's metadata
+    /// (`regrade_history`) for audit. Returns (line, old score, new score).
     pub async fn regrade_question(
         &self,
         survey_id: Uuid,
         question_id: Uuid,
     ) -> Result<Vec<(Uuid, Option<f64>, Option<f64>)>, SurveyWriteError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let survey = crate::infrastructure::persistence::survey_session_repository::SurveySessionRepository::find_survey_by_id(&mut tx, survey_id)
             .await?
             .ok_or(SurveyWriteError::SurveyNotFound(survey_id))?;
@@ -405,24 +472,42 @@ impl ScoringService {
         .ok_or(SurveyWriteError::QuestionNotFound(question_id))?;
         let answers = ScoringRepository::answers_for_question(&mut tx, question_id).await?;
 
-        // Load the takers of every stored line of this question.
         let line_rows = sqlx::query_as::<_, UserInputLine>(
             r#"SELECT * FROM survey.survey_user_input_lines
-               WHERE question_id = $1 AND (metadata->>'deleted_at') IS NULL"#,
+               WHERE question_id = $1 AND (metadata->>'deleted_at') IS NULL
+               ORDER BY user_input_id, answered_at, id"#,
         )
         .bind(question_id)
         .fetch_all(&mut *tx)
         .await?;
+        let recorded: std::collections::HashMap<Uuid, f64> = sqlx::query_as::<_, (Uuid, f64)>(
+            r#"SELECT id, (metadata->>'speed_factor')::float8
+               FROM survey.survey_user_input_lines
+               WHERE question_id = $1 AND metadata ? 'speed_factor'"#,
+        )
+        .bind(question_id)
+        .fetch_all(&mut *tx)
+        .await?
+        .into_iter()
+        .collect();
 
         // The marker is armed for THIS transaction only.
         ScoringRepository::arm_regrade_marker(&mut tx).await?;
 
-        let mut touched = Vec::new();
+        // One attempt's lines at a time: a choice answer is the set of its rows.
+        let mut by_input: Vec<(Uuid, Vec<&UserInputLine>)> = Vec::new();
         for line in &line_rows {
-            let input = crate::infrastructure::persistence::attempt_repository::AttemptRepository::find_live_by_id(&mut tx, line.user_input_id)
+            match by_input.last_mut() {
+                Some((id, lines)) if *id == line.user_input_id => lines.push(line),
+                _ => by_input.push((line.user_input_id, vec![line])),
+            }
+        }
+
+        let mut touched = Vec::new();
+        for (input_id, lines) in &by_input {
+            let input = crate::infrastructure::persistence::attempt_repository::AttemptRepository::find_live_by_id(&mut tx, *input_id)
                 .await?
-                .ok_or(SurveyWriteError::InputNotFound(line.user_input_id))?;
-            let value = Self::stored_value_of(line);
+                .ok_or(SurveyWriteError::InputNotFound(*input_id))?;
             let ctx = GradeContext {
                 survey: &survey,
                 input: &input,
@@ -430,56 +515,72 @@ impl ScoringService {
                 answers: &answers,
                 now: Utc::now(),
             };
-            let mut grade = Self::raw_grade(&ctx, &value);
-            // Re-apply the speed factor from the STORED basis (the whole
-            // point: the recompute must reproduce, not re-derive from a
-            // fresh wall clock).
-            if let Some(raw) = grade.answer_score {
-                if raw > 0.0 && Self::speed_eligible(&ctx) {
-                    let factor = if ctx.survey.session_question_id == Some(ctx.question.id) {
-                        let stored = line.speed_seconds.unwrap_or(0) as f64;
-                        let limit = ctx.question.time_limit.unwrap_or(0).max(0) as f64;
-                        speed_factor(stored, limit)
-                    } else {
-                        0.5
-                    };
-                    grade.answer_score = Some(raw * factor);
+            let is_set = lines
+                .iter()
+                .any(|l| !l.skipped && l.answer_type == Some(SurveyAnswerType::Suggestion));
+            let value = if is_set {
+                if lines.iter().any(|l| l.matrix_row_id.is_some()) {
+                    AnswerValue::Matrix(
+                        lines
+                            .iter()
+                            .filter_map(|l| Some((l.matrix_row_id?, l.suggested_answer_id?)))
+                            .collect(),
+                    )
+                } else {
+                    AnswerValue::Choice(lines.iter().filter_map(|l| l.suggested_answer_id).collect())
                 }
+            } else {
+                Self::stored_value_of(lines[0])
+            };
+
+            let mut graded = Self::raw_grade(&ctx, &value);
+            if graded.answer_score.map_or(false, |r| r > 0.0) && Self::speed_eligible(&ctx) {
+                let factor = lines
+                    .iter()
+                    .find_map(|l| recorded.get(&l.id).copied())
+                    .unwrap_or_else(|| match lines[0].speed_seconds {
+                        Some(stored) => {
+                            let limit = question.time_limit.unwrap_or(0).max(0) as f64;
+                            speed_factor(stored as f64, limit)
+                        }
+                        None => 1.0,
+                    });
+                graded.answer_score = graded.answer_score.map(|r| r * factor);
             }
 
-            ScoringRepository::regrade_score(&mut tx, line.id, grade.answer_score, grade.answer_is_correct)
+            let new_scores: Vec<(Option<f64>, Option<bool>)> = if is_set {
+                Self::set_lines(&ctx, &value, &graded)
+                    .into_iter()
+                    .map(|l| (l.score, Some(l.correct)))
+                    .collect()
+            } else {
+                vec![(graded.answer_score, graded.answer_is_correct)]
+            };
+
+            for (line, (score, correct)) in lines.iter().zip(new_scores) {
+                ScoringRepository::regrade_score(&mut tx, line.id, score, correct).await?;
+                sqlx::query(
+                    r#"UPDATE survey.survey_user_input_lines
+                       SET metadata = jsonb_set(
+                            metadata,
+                            '{regrade_history}',
+                            COALESCE(metadata->'regrade_history', '[]'::jsonb)
+                              || jsonb_build_array(jsonb_build_object(
+                                   'at', to_jsonb(NOW()),
+                                   'old_score', to_jsonb($2),
+                                   'new_score', to_jsonb($3))))
+                       WHERE id = $1"#,
+                )
+                .bind(line.id)
+                .bind(line.answer_score)
+                .bind(score)
+                .execute(&mut *tx)
                 .await?;
-            // The audit pair on the line's metadata.
-            sqlx::query(
-                r#"UPDATE survey.survey_user_input_lines
-                   SET metadata = jsonb_set(
-                        metadata,
-                        '{regrade_history}',
-                        COALESCE(metadata->'regrade_history', '[]'::jsonb)
-                          || jsonb_build_array(jsonb_build_object(
-                               'at', to_jsonb(NOW()),
-                               'old_score', to_jsonb($2),
-                               'new_score', to_jsonb($3))))
-                   WHERE id = $1"#,
-            )
-            .bind(line.id)
-            .bind(line.answer_score)
-            .bind(grade.answer_score)
-            .execute(&mut *tx)
-            .await?;
-
-            touched.push((line.id, line.answer_score, grade.answer_score));
-        }
-
-        // Recompute the affected inputs' stored triples from the frozen
-        // denominators (unchanged by construction — only weights moved).
-        let mut seen = std::collections::HashSet::new();
-        for line in &line_rows {
-            if seen.insert(line.user_input_id) {
-                if let Some(input) = crate::infrastructure::persistence::attempt_repository::AttemptRepository::find_live_by_id(&mut tx, line.user_input_id).await? {
-                    self.recompute_input_scores(&mut tx, &input, &survey).await?;
-                }
+                touched.push((line.id, line.answer_score, score));
             }
+
+            // The attempt's stored triple, from its frozen denominator.
+            self.recompute_input_scores(&mut tx, &input, &survey).await?;
         }
 
         tx.commit().await?;

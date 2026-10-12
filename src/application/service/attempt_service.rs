@@ -346,7 +346,7 @@ impl AttemptService {
         let secret = self.require_secret()?;
         let parts = parse_capability(link).ok_or(SurveyWriteError::AttemptNotSubmittable)?;
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let row = AttemptRepository::find_live_by_id(&mut tx, parts.id)
             .await?
             .ok_or(SurveyWriteError::AttemptNotSubmittable)?;
@@ -383,7 +383,7 @@ impl AttemptService {
         ttl_days: Option<i64>,
     ) -> Result<AttemptTicket, SurveyWriteError> {
         let _ = self.require_secret()?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let nonce = mint_nonce();
         let expires = Utc::now() + Duration::days(ttl_days.unwrap_or(DEFAULT_TOKEN_TTL_DAYS));
         if !AttemptRepository::rotate_nonce(&mut tx, input_id, &nonce, expires).await? {
@@ -502,7 +502,7 @@ impl AttemptService {
         user_id: Option<Uuid>,
     ) -> Result<AttemptTicket, SurveyWriteError> {
         let _ = self.require_secret()?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let survey = SurveySessionRepository::find_survey_by_access_token(&mut tx, survey_token)
             .await?
             .ok_or(SurveyWriteError::SurveyNotPublicAccess)?;
@@ -515,8 +515,29 @@ impl AttemptService {
         if survey.users_login_required && user_id.is_none() {
             return Err(SurveyWriteError::LoginRequired);
         }
-        if !Self::has_attempts_left(&mut tx, &survey, None, None, email).await? {
-            return Err(SurveyWriteError::AttemptsExhausted { limit: survey.attempts_limit });
+        if survey.is_attempts_limited {
+            // A limit needs an identity to count against, and an email in the request body is
+            // not one: a limited survey is taken signed in, and the pool is the user.
+            let Some(taker) = user_id else {
+                return Err(SurveyWriteError::LoginRequired);
+            };
+            // One start at a time per user and survey, so two concurrent starts cannot both
+            // find no open attempt and mint two.
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+                .bind(format!("survey-start:{}:{taker}", survey.id))
+                .execute(&mut *tx)
+                .await?;
+            // An unfinished attempt is resumed, not doubled: the limit counts finished
+            // attempts, so at most one may be open at a time.
+            if let Some(open) = AttemptRepository::open_public_attempt(&mut tx, survey.id, taker).await? {
+                tx.commit().await?;
+                let link = self.mint_capability(&open)?;
+                return Ok(AttemptTicket { input: open, link });
+            }
+            let used = AttemptRepository::user_done_count(&mut tx, survey.id, taker).await?;
+            if used >= survey.attempts_limit.max(0) as i64 {
+                return Err(SurveyWriteError::AttemptsExhausted { limit: survey.attempts_limit });
+            }
         }
         let input = self
             .mint_attempt(
@@ -551,12 +572,14 @@ impl AttemptService {
     ) -> Result<AttemptTicket, SurveyWriteError> {
         let _ = self.require_secret()?;
         let now = Utc::now();
-        let id_key = format!("code:{code}|id:{identity}");
-        let ip_key = format!("code:{code}|ip:{ip}");
+        // Counted per caller across every code: keyed per code, a caller walking the code
+        // space would meet each code fresh and never accumulate a failure.
+        let id_key = format!("id:{identity}");
+        let ip_key = format!("ip:{ip}");
         self.failures.check(&id_key, now)?;
         self.failures.check(&ip_key, now)?;
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let survey = SurveySessionRepository::find_survey_by_session_code(&mut tx, code)
             .await?;
         let armed_at = match &survey {
@@ -621,11 +644,54 @@ impl AttemptService {
         Ok(AttemptTicket { input, link })
     }
 
+    /// The lockout gate the session-code preview shares with the join: a caller locked out
+    /// for guessing codes is refused before the lookup.
+    pub fn code_lookup_gate(&self, ip: &str) -> Result<(), SurveyWriteError> {
+        self.failures.check(&format!("ip:{ip}"), Utc::now())
+    }
+
+    /// Count a preview of a code that is not live as a failed guess, as the join does.
+    pub fn register_code_miss(&self, ip: &str) {
+        self.failures.register_failure(&format!("ip:{ip}"), Utc::now());
+    }
+
+    /// Verify a link for a FINISHED attempt — the certification page reads the verdict only
+    /// once the attempt is done, never mid-attempt. Unknown, forged and unfinished links
+    /// share one refusal.
+    pub async fn verify_finished_capability(
+        &self,
+        link: &str,
+    ) -> Result<UserInput, SurveyWriteError> {
+        let secret = self.require_secret()?;
+        let parts = parse_capability(link).ok_or(SurveyWriteError::AttemptNotSubmittable)?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
+        let row = AttemptRepository::find_live_by_id(&mut tx, parts.id)
+            .await?
+            .ok_or(SurveyWriteError::AttemptNotSubmittable)?;
+        tx.commit().await?;
+        let expected_input =
+            mac_input(&row.id, &row.token_nonce, &grant_for(row.survey_id), row.token_expires_at.timestamp());
+        if !verify_mac(secret, &expected_input, &parts.mac)
+            || parts.nonce != row.token_nonce
+            || parts.exp != row.token_expires_at.timestamp()
+        {
+            tracing::warn!(input = %row.id, "survey_token_verify_failed");
+            return Err(SurveyWriteError::AttemptNotSubmittable);
+        }
+        if Utc::now() > row.token_expires_at {
+            return Err(SurveyWriteError::AttemptExpired);
+        }
+        if row.state != SurveyInputState::Done {
+            return Err(SurveyWriteError::AttemptNotSubmittable);
+        }
+        Ok(row)
+    }
+
     /// Test-mode entry (`test_entry = true` — excluded from attempt
     /// counts AND KPI computes).
     pub async fn test_start(&self, survey_id: Uuid) -> Result<AttemptTicket, SurveyWriteError> {
         let _ = self.require_secret()?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let survey = SurveySessionRepository::find_survey_by_id(&mut tx, survey_id)
             .await?
             .ok_or(SurveyWriteError::SurveyNotFound(survey_id))?;
@@ -667,7 +733,7 @@ impl AttemptService {
         existing_mode: SurveyInviteExistingMode,
     ) -> Result<Vec<Result<AttemptTicket, SurveyWriteError>>, SurveyWriteError> {
         let _ = self.require_secret()?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let survey = SurveySessionRepository::find_survey_by_id(&mut tx, survey_id)
             .await?
             .ok_or(SurveyWriteError::SurveyNotFound(survey_id))?;
@@ -780,7 +846,7 @@ impl AttemptService {
         input_id: Uuid,
     ) -> Result<AttemptTicket, SurveyWriteError> {
         let _ = self.require_secret()?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let prior = AttemptRepository::find_live_by_id(&mut tx, input_id)
             .await?
             .ok_or(SurveyWriteError::InputNotFound(input_id))?;

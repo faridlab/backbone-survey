@@ -72,7 +72,40 @@ impl ScoringRepository {
                    (user_input_id, question_id, metadata)
                SELECT $1, q.id,
                       jsonb_build_object(
-                          'frozen_answer_score', q.answer_score,
+                          -- The most the question can earn, so a perfect attempt scores 100:
+                          -- a choice question's best label (simple) or every positive label
+                          -- (multiple), a matrix's best correct column per row (or every
+                          -- correct column per row when several may be picked), else its own
+                          -- weight. An unweighted label earns the question's weight only when
+                          -- it is correct, exactly as grading reads it.
+                          'frozen_answer_score', CASE q.question_type
+                              WHEN 'simple_choice' THEN COALESCE((
+                                  SELECT max(w.weight) FROM (
+                                      SELECT CASE WHEN a.answer_score <> 0 THEN a.answer_score
+                                                  WHEN a.is_correct THEN q.answer_score ELSE 0 END AS weight
+                                      FROM survey.survey_question_answers a
+                                      WHERE a.question_id = q.id AND (a.metadata->>'deleted_at') IS NULL
+                                  ) w WHERE w.weight > 0), 0)
+                              WHEN 'multiple_choice' THEN COALESCE((
+                                  SELECT sum(w.weight) FROM (
+                                      SELECT CASE WHEN a.answer_score <> 0 THEN a.answer_score
+                                                  WHEN a.is_correct THEN q.answer_score ELSE 0 END AS weight
+                                      FROM survey.survey_question_answers a
+                                      WHERE a.question_id = q.id AND (a.metadata->>'deleted_at') IS NULL
+                                  ) w WHERE w.weight > 0), 0)
+                              WHEN 'matrix' THEN
+                                  (SELECT count(*) FROM survey.survey_question_answers r
+                                    WHERE r.matrix_question_id = q.id AND (r.metadata->>'deleted_at') IS NULL)
+                                  * COALESCE((
+                                      SELECT CASE WHEN q.matrix_subtype = 'multiple' THEN sum(w.weight) ELSE max(w.weight) END
+                                      FROM (
+                                          SELECT CASE WHEN a.answer_score <> 0 THEN a.answer_score ELSE q.answer_score END AS weight
+                                          FROM survey.survey_question_answers a
+                                          WHERE a.question_id = q.id AND a.is_correct
+                                            AND (a.metadata->>'deleted_at') IS NULL
+                                      ) w WHERE w.weight > 0), 0)
+                              ELSE q.answer_score
+                          END,
                           'frozen_scored', q.is_scored_question,
                           'frozen_sequence', q.sequence,
                           'frozen_page_id', q.page_id::text
@@ -206,6 +239,39 @@ impl ScoringRepository {
         .bind(question_id)
         .fetch_all(&mut *conn)
         .await
+    }
+
+    /// The live matrix row labels of one question (the rows a matrix answer may name).
+    pub async fn matrix_rows_for_question(
+        conn: &mut PgConnection,
+        question_id: Uuid,
+    ) -> Result<Vec<Uuid>, sqlx::Error> {
+        sqlx::query_scalar::<_, Uuid>(
+            r#"SELECT id FROM survey.survey_question_answers
+               WHERE matrix_question_id = $1 AND (metadata->>'deleted_at') IS NULL"#,
+        )
+        .bind(question_id)
+        .fetch_all(&mut *conn)
+        .await
+    }
+
+    /// Record the speed factor a line was graded with, so a regrade reapplies it instead of
+    /// re-deriving it from a session cursor that has since moved.
+    pub async fn record_speed_factor(
+        conn: &mut PgConnection,
+        line_id: Uuid,
+        factor: f64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"UPDATE survey.survey_user_input_lines
+               SET metadata = metadata || jsonb_build_object('speed_factor', $2::float8)
+               WHERE id = $1"#,
+        )
+        .bind(line_id)
+        .bind(factor)
+        .execute(&mut *conn)
+        .await?;
+        Ok(())
     }
 
     /// All lines of one input, question-ordered (the scoring fold and the

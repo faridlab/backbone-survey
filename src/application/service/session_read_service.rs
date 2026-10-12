@@ -103,12 +103,13 @@ impl SessionReadService {
     /// The session snapshot of a survey (any state; `session_state`
     /// `None` = never armed or ended).
     pub async fn snapshot(&self, survey_id: Uuid) -> Result<SessionSnapshot, SurveyWriteError> {
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let row = sqlx::query_as::<_, Survey>(
             r#"SELECT * FROM survey.survey_surveys
                WHERE id = $1 AND (metadata->>'deleted_at') IS NULL"#,
         )
         .bind(survey_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?
         .ok_or(SurveyWriteError::SurveyNotFound(survey_id))?;
         let current_sequence: Option<i32> = match row.session_question_id {
@@ -117,11 +118,12 @@ impl SessionReadService {
                     r#"SELECT sequence FROM survey.survey_questions WHERE id = $1"#,
                 )
                 .bind(qid)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *tx)
                 .await?
             }
             None => None,
         };
+        tx.commit().await?;
         Ok(SessionSnapshot {
             survey_id: row.id,
             session_state: row.session_state,
@@ -142,6 +144,7 @@ impl SessionReadService {
         survey_id: Uuid,
         wire_identity_key: &str,
     ) -> Result<bool, SurveyWriteError> {
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let live = sqlx::query_scalar::<_, i64>(
             r#"SELECT count(*) FROM survey.survey_user_inputs
                WHERE survey_id = $1
@@ -152,8 +155,9 @@ impl SessionReadService {
         )
         .bind(survey_id)
         .bind(wire_identity_key)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(live > 0)
     }
 
@@ -167,6 +171,7 @@ impl SessionReadService {
         survey_id: Uuid,
         limit: i64,
     ) -> Result<Vec<(Uuid, Option<String>, f64, bool)>, SurveyWriteError> {
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let rows = sqlx::query_as::<_, (Uuid, Option<String>, f64, bool)>(
             r#"SELECT id, nickname, scoring_total, scoring_success
                FROM survey.survey_user_inputs
@@ -180,8 +185,9 @@ impl SessionReadService {
         )
         .bind(survey_id)
         .bind(limit.clamp(1, 1000))
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(rows)
     }
 }

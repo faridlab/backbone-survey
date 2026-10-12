@@ -1,13 +1,11 @@
 # The rule ratchet (schema doctor): these counts may only go down. Regenerate with
 # `metaphor schema rules . --update-baseline` after enforcing a rule.
-unenforced: 7
+unenforced: 5
 warnings: 0
 machines_without_verbs: 0
 untested_rule_ids: 18
 unenforced_rules:
 - 'survey.hook.yaml: anti_cheat_windows'
-- 'survey.hook.yaml: attempt_token_capability'
-- 'survey.hook.yaml: certification_publication_gate'
 - 'survey.hook.yaml: denominator_frozen'
 - 'survey.hook.yaml: intake_storage_contract'
 - 'survey.hook.yaml: score_drift_refused'

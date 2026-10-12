@@ -72,7 +72,8 @@ rules:
     assert: "authorization = the per-attempt capability: nonce selector + mandatory expiry + HMAC MAC over (id, nonce, grant, exp), constant-time compared; MULTI-use within the attempt until state = done or expiry. Unknown / expired / malformed / wrong-state answers share ONE refusal body (no enumeration oracle); expiry is a typed 410; the clock is UTC (SV-B1)"
     error_code: attempt_not_submittable
     enforcement: service
-    justification: "PARTLY: the capability's MAC and expiry hold, but verify_capability's done check commits before submit_answer re-reads the attempt unlocked, so a submit racing a finish writes lines and rescores a finished attempt; the certification read is refused after done."
+    enforced_by: "src/application/service/attempt_service.rs::verify_capability, src/application/service/attempt_service.rs::verify_finished_capability, src/infrastructure/persistence/attempt_repository.rs::find_live_by_id_for_update"
+    justification: "The MAC and expiry are checked on every use; submit and finish take the attempt row lock, so a submit that loses the race to a finish sees done and refuses; the certification read accepts only a finished attempt."
     # service-only justification: the MAC is code over stored columns; no
     # row-level CHECK can express "this MAC recomputes". The nonce's
     # partial-UNIQUE among live rows (hardening migration) is the DB arm.
@@ -104,9 +105,9 @@ rules:
     when: arm session
     assert: "code generation grows 4 -> 9 digits on collision and FAILS LOUDLY at 9 (typed SessionCodeExhausted) — the upstream False-emitting generator does not port. Uniqueness is the partial UNIQUE among non-null rows (SV-S2)"
     error_code: session_code_exhausted
-    enforced_by: "src/application/service/survey_write_service.rs::arm_session, migrations/20260426220001_create_survey_table.up.sql::idx_survey_surveys_session_code"
     enforcement: both
-    justification: "Exhaustion of the 4..9 digit ladder refuses loud; a concurrent collision answers 500 instead of moving to a longer code, and an ended session keeps its code."
+    enforced_by: "src/application/service/survey_write_service.rs::arm_session, migrations/20260426220001_create_survey_table.up.sql::idx_survey_surveys_session_code"
+    justification: "Exhaustion of the 4..9 digit ladder refuses loud and a collision, seen or raced, moves on to the next candidate; an ended session keeps its code."
 
   - id: R-SV7
     name: session_code_lockout
@@ -115,7 +116,7 @@ rules:
     assert: "per-identity AND per-IP counters: 3 consecutive failures -> 30 s lock, doubling per extra failure, 15 min cap, 1 s minimum spacing; success resets. Wrong code and unknown code share one answer (no oracle). Constants are named pub consts with a pure lockout_until()"
     error_code: code_verify_locked
     enforcement: service
-    justification: "NOT EFFECTIVE: the lockout counts per code, keyed on a body-supplied identity and the client's own forwarded-for, and the public session preview answers live codes without counting, so the 4-digit space can be walked."
+    justification: "PARTLY: failures are counted per caller across every code, and the session preview counts a miss as a join does, but the caller's address is the first forwarded-for entry, which only a fronting proxy that overwrites the header makes trustworthy, and the book lives in one process."
 
   # ---- scoring: the frozen denominator + the loud drift refusal -------------
 
@@ -137,7 +138,7 @@ rules:
     assert: "answer_score / answer_is_correct / speed_seconds are written ONCE at submit. Any later change to them on a graded line is refused: the typed SurveyWriteError::ScoreDriftRefused on the service path, and the hand *monotonic* migration's BEFORE UPDATE trigger raises survey_score_drift_refused on the raw-SQL path (outside the regrade marker). The ONLY sanctioned recompute is the guarded regrade_question verb, which works from the STORED speed_seconds and value columns — never a fresh now()"
     error_code: survey_score_drift_refused
     enforcement: both
-    justification: "PARTLY: the drift trigger refuses an in-place change outside regrade (as 500), but delete-and-insert passes it, and regrade_question wipes choice and matrix scores and re-times speed against the current cursor."
+    justification: "PARTLY: the drift trigger refuses an in-place change outside regrade and the regrade recomputes choice and matrix answers from their rows with the speed factor recorded at submit, but a choice resubmit replaces its lines by delete-and-insert, which the trigger does not see."
     # The SV-B2 "fixed loudly" mandate: never a silent overwrite, never a
     # silent re-derivation.
 
@@ -161,7 +162,7 @@ rules:
     assert: "attempt pre-creation precedes any submit (the row exists first — THE anti-cheat); _has_attempts_left is the pool self-join (same survey + done + not-test + shared-or-null invite_token + same partner-or-email) flushed in the caller's transaction; time limits compare in UTC with the +10 s survey / +3 s question graces against the STORED clocks"
     error_code: attempt_not_allowed
     enforcement: service
-    justification: "BYPASSABLE: the attempt limit counts only finished attempts and gates only at mint, so several can be minted before any finishes; the public start pools by a body-supplied email, so omitting it gives unlimited attempts."
+    justification: "PARTLY: a limited public survey is taken signed in and pooled by the user; a start serializes per user, resumes an open attempt and counts finished ones, so at most the limit can finish. Invitation pools keep the partner-or-email pool, and invite mints without the gate."
 
   - id: R-SV12
     name: intake_storage_contract
@@ -170,7 +171,7 @@ rules:
     assert: "scalar types UPSERT in place; choice and matrix DELETE-AND-RECREATE; an empty choice answer materializes a SKIPPED line; comments are ALWAYS char_box + value_char_box; save_as_email / save_as_nickname side-write the INPUT row; overwrite_existing is gated on users_can_go_back / save_as_* and refused loudly otherwise; inactive conditional answers are CLEARED (dependent lines deleted) at submit — scoring correctness over UX"
     error_code: intake_contract_violation
     enforcement: service
-    justification: "PARTLY: choice and matrix answers are not de-duplicated and every label line is scored, so repeating a label inflates the score past 100 percent; two concurrent scalar submits both insert; an empty choice leaves earlier lines and conditionals in place."
+    justification: "PARTLY: chosen labels must belong to the question and count once, a single choice takes one label and a simple matrix one column per row, and the attempt row lock makes concurrent submits store one answer; an empty choice still leaves earlier lines and conditionals in place."
 
   # ---- session: the advance lock + the bulk-done bypass fence ---------------
 
@@ -213,7 +214,8 @@ rules:
     assert: "publish iff certification AND certification_give_badge AND scoring_success AND user_id IS NOT NULL AND NOT test_entry — and ONLY on the FIRST successful completion in the attempt pool (producer-side once-per-user; SPEC.md §7.1). A NULL user_id at the gate is a config violation: the fact is NOT published, a typed audit record is written (survey_certification_grant_refused), and the funnel continues — never a silent drop"
     error_code: certification_grant_refused
     enforcement: service
-    justification: "PARTLY: the first-success check runs after commit without a lock, pools by a body-supplied email rather than the user, and the grant key is per attempt, so a certification can be published more than once per user."
+    enforced_by: "src/application/service/intake_service.rs::finish, src/application/service/certification_port.rs::for_user"
+    justification: "Once per user rides the grant key: every passing completion publishes under the certification and the user, so the consumer's grant-key unique grants the badge once however many attempts pass or race; a survey without a badge key publishes nothing."
 
   - id: R-SV17
     name: certification_port_fail_closed

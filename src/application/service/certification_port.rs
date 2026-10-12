@@ -57,8 +57,9 @@ pub enum CertificationGrantError {
 /// - `certification_ref` — `"survey:{survey_id}"`, the certification's own
 ///   logical id (the occurrence's parent).
 /// - `survey_ref` — the issuing survey's uuid.
-/// - `attempt_ref` — the WINNING input's uuid rendered as a string; with
-///   `certification_ref` it forms the consumer's idempotency grant_key.
+/// - `attempt_ref` — `"user:{recipient_user_id}"` for a published fact
+///   ([`CertificationFact::for_user`]); with `certification_ref` it forms the consumer's
+///   idempotency grant_key, so a user is granted once per certification.
 /// - `recipient_user_id` — the certified user (never NULL at this point:
 ///   the publication gate already refused anonymous winners).
 /// - `badge_key` — the stable badge key from
@@ -76,6 +77,19 @@ impl CertificationFact {
     /// Build the fact from the winning attempt's parts. `certification_ref`
     /// is always the `"survey:{id}"` form; `attempt_ref` is the winning
     /// input's uuid as a string.
+    /// The fact a passing attempt publishes: `attempt_ref` names the USER (`"user:{id}"`), not
+    /// the attempt, so the consumer's idempotency key — certification plus attempt_ref — grants
+    /// the badge once per user however many times, or however concurrently, they pass.
+    pub fn for_user(survey_id: Uuid, recipient_user_id: Uuid, badge_key: impl Into<String>) -> Self {
+        Self {
+            certification_ref: format!("survey:{survey_id}"),
+            survey_ref: Some(survey_id),
+            attempt_ref: format!("user:{recipient_user_id}"),
+            recipient_user_id,
+            badge_key: badge_key.into(),
+        }
+    }
+
     pub fn new(survey_id: Uuid, winning_input_id: Uuid, recipient_user_id: Uuid, badge_key: impl Into<String>) -> Self {
         Self {
             certification_ref: format!("survey:{survey_id}"),

@@ -238,9 +238,15 @@ Index: `(user_input_id, question_id)`.
 
 Pool identity (raw-SQL self-join in the repository, `user_input.model.yaml` service notes
 `:137-150`): same survey + `state = done` + `test_entry IS NOT TRUE` + (`invite_token`
-shared or both NULL) + (same `partner_id` OR same `email`). `_has_attempts_left` and the
-first-success publication rule (§7) read this pool. Flushed inside the caller's
-transaction so pending writes are visible.
+shared or both NULL) + (same `partner_id` OR same `email`). `_has_attempts_left` reads
+this pool for invitation pools. Flushed inside the caller's transaction so pending writes
+are visible.
+
+A **limited public survey** is pooled by the signed-in user instead: an email typed into the
+start request is not an identity, so an anonymous start of a limited survey refuses with
+`LoginRequired`. The start serializes per (survey, user), resumes the user's open attempt
+rather than minting a second, and mints only while the user's finished attempts are below
+the limit — so at most `attempts_limit` attempts can finish.
 
 ## 3. Lifecycles (ADR-0016 declarations)
 
@@ -333,7 +339,9 @@ knobs are all present (attendance kiosk-PIN precedent, `attendance_write_service
 - **Generation:** length grows 4→9 digits on collision; **exhaustion at 9 digits fails
   loudly** (`SessionCodeExhausted` typed error — SV-B12 fixed; the upstream False-emitting
   generator does not port). Uniqueness is the DB partial UNIQUE (SV-S2).
-- **Attempt counters + escalating lockout:** per-identity AND per-IP; 3 consecutive
+- **Attempt counters + escalating lockout:** per-identity AND per-IP, each counted across
+  every code (a book keyed per code lets a caller walk the code space, meeting each code
+  fresh); the public preview of a code counts a miss as a join does; 3 consecutive
   failures → 30 s lock, doubling per extra failure, 15 min cap, 1 s minimum spacing.
   Constants live as named `pub const`s with pure `lockout_until()` (probe 2 asserts the
   pure function). Success resets the counter.
@@ -468,20 +476,19 @@ the module emits it through the port below (the host adapter delivers in-process
 |---|---|---|
 | `certification_ref` | string | `"survey:{survey_id}"` — stable, namespaced |
 | `survey_ref` | uuid? | the survey id |
-| `attempt_ref` | string | the winning `UserInput.id` (uuid string) |
+| `attempt_ref` | string | `"user:{recipient_user_id}"` — the grain of once-per-user |
 | `recipient_user_id` | uuid | the input's `user_id` (guarded non-null below) |
 | `badge_key` | string | the survey's `certification_badge_key` |
 
 **Idempotency key** (derived by the consumer, restated here as the contract):
 `event:certification:{certification_ref}:{attempt_ref}` — exactly-once per (survey,
-attempt) under at-least-once delivery, via engagement's `grant_key` partial UNIQUE (R-G1).
+user) under at-least-once delivery, via engagement's `grant_key` partial UNIQUE (R-G1).
 
-**Once-per-user semantics are producer-side:** the funnel publishes ONLY on the **first
-successful completion in the attempt pool** (the §2.6 self-join: same survey + done + not
-test + shared-or-null invite token + same partner-or-email, no prior
-`scoring_success = true` member). Later passing retries create their attempts and score
-records but do not re-publish — preserving Odoo's challenge `period = 'once'` behavior
-under engagement's (certification, attempt) key. Recorded as the producer's ruling.
+**Once-per-user rides the key:** every passing completion publishes, and every publish for
+one user carries the same `attempt_ref`, so the consumer converges a retake — or two
+finishes racing — on the first grant, preserving Odoo's challenge `period = 'once'`
+behavior. A producer-side "first success in the pool" check cannot: it runs after commit,
+without a lock, over a pool an email can join. A survey with no badge key publishes nothing.
 
 **Publication gate:** `certification ∧ certification_give_badge ∧ scoring_success ∧
 user_id IS NOT NULL ∧ NOT test_entry`. The `certification_give_badge` clamp (login

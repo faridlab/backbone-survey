@@ -15,6 +15,11 @@
 # same change that lands it.
 
 user_owned:
+  # The composer's request pool and org scope, resolved per request (ADR-0029 pool law): every
+  # service opens its transactions through it, so a tenant mount reaches its own database and a
+  # fenced composition has its scope bound on each hand-written statement.
+  - "src/request_pool.rs"
+
   # The certification seam (fail-closed by design): the module owns the
   # trait, the typed error, and the refusing default; the composing host
   # registers the adapter that delivers CertificationPassed facts to

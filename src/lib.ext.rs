@@ -159,7 +159,7 @@ impl crate::ThisModule {
     ) -> Result<serde_json::Value, crate::application::service::SurveyWriteError> {
         use crate::application::service::SurveyWriteError as E;
         use crate::domain::entity::SurveyScoringType;
-        let mut conn = self.db_pool.acquire().await?;
+        let mut conn = crate::request_pool::begin(&self.db_pool).await?;
         let input =
             crate::infrastructure::persistence::AttemptRepository::find_live_by_id(
                 &mut conn, input_id,
@@ -225,6 +225,7 @@ impl crate::ThisModule {
     ) -> Result<Vec<serde_json::Value>, crate::application::service::SurveyWriteError> {
         let snapshot = self.session_read_service().snapshot(survey_id).await?;
         let current = snapshot.current_question_id;
+        let mut tx = crate::request_pool::begin(&self.db_pool).await?;
         let rows = sqlx::query_as::<_, (uuid::Uuid, Option<String>, f64, bool)>(
             r#"SELECT i.id, i.nickname,
                       i.scoring_total - COALESCE(cur.score, 0) AS total,
@@ -246,8 +247,9 @@ impl crate::ThisModule {
         )
         .bind(survey_id)
         .bind(current)
-        .fetch_all(&self.db_pool)
+        .fetch_all(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(rows
             .into_iter()
             .map(|(id, nickname, total, success)| {
@@ -266,6 +268,7 @@ impl crate::ThisModule {
         &self,
         survey_id: uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, crate::application::service::SurveyWriteError> {
+        let mut tx = crate::request_pool::begin(&self.db_pool).await?;
         let rows = sqlx::query_as::<_, (Option<uuid::Uuid>, i64, i64, i64, i64)>(
             r#"SELECT q.page_id,
                       count(*) FILTER (WHERE l.answer_is_correct) AS correct,
@@ -285,8 +288,9 @@ impl crate::ThisModule {
                ORDER BY q.page_id NULLS FIRST"#,
         )
         .bind(survey_id)
-        .fetch_all(&self.db_pool)
+        .fetch_all(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(rows
             .into_iter()
             .map(|(page_id, correct, partial, incorrect, skipped)| {

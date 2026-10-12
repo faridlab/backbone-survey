@@ -104,17 +104,30 @@ fn visitor_ip(headers: &HeaderMap) -> String {
 /// GET /survey/s/:code — the session preview: metadata a join screen
 /// renders (title, live state). NO writes, no code verification
 /// bookkeeping — a preview must not consume Tier B counters.
-async fn session_preview(State(app): State<ApiState>, Path(code): Path<String>) -> Response {
+async fn session_preview(
+    State(app): State<ApiState>,
+    headers: HeaderMap,
+    Path(code): Path<String>,
+) -> Response {
+    // The preview answers whether a code is live, so it is a guess like a join and shares the
+    // join's lockout: a caller walking codes here is counted and locked out the same way.
+    let ip = visitor_ip(&headers);
+    if let Err(e) = app.attempt_service().code_lookup_gate(&ip) {
+        return survey_err(e);
+    }
     let writes = app.survey_write_service();
     match writes.survey_by_session_code(&code).await {
         Ok(Some(view)) if view["live"] == json!(true) => (StatusCode::OK, Json(view)).into_response(),
         // Unknown AND dead (ended / expired) codes answer the same 404 —
         // a known-but-dead code is not distinguishable from an unknown one.
-        Ok(Some(_)) | Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "unknown session code", "code": "survey_session_code_not_valid" })),
-        )
-            .into_response(),
+        Ok(Some(_)) | Ok(None) => {
+            app.attempt_service().register_code_miss(&ip);
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "unknown session code", "code": "survey_session_code_not_valid" })),
+            )
+                .into_response()
+        }
         Err(e) => survey_err(e),
     }
 }
@@ -393,12 +406,12 @@ async fn next_question(State(app): State<ApiState>, Path(token): Path<String>) -
 }
 
 /// GET /survey/attempt/:token/certification — the scoring evidence the
-/// webapp certification page renders. Requires a `scoring_success`
+/// webapp certification page renders. Requires a finished `scoring_success`
 /// input; the reveal obeys `scoring_type` (without-answers shows the
 /// verdicts but never the stored correct answers).
 async fn certification_evidence(State(app): State<ApiState>, Path(token): Path<String>) -> Response {
     let module = app.clone();
-    match module.attempt_service().verify_capability(&token).await {
+    match module.attempt_service().verify_finished_capability(&token).await {
         Ok(input) => match module.certification_evidence(input.id).await {
             Ok(view) => (StatusCode::OK, Json(view)).into_response(),
             Err(e) => survey_err(e),

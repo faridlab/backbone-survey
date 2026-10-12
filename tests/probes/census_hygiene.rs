@@ -192,9 +192,16 @@ async fn p17_public_surface_hygiene() {
     assert_eq!(s2, StatusCode::OK);
 
     // ── unknown vs dead: one body, no oracle ────────────────────────────
-    let (_, _, unknown_body) = call(&public, req("GET", "/survey/s/0000", None)).await;
-    assert_eq!(call(&public, req("GET", "/survey/s/0000", None)).await.0, StatusCode::NOT_FOUND);
+    let (unknown_status, _, unknown_body) = call(&public, req("GET", "/survey/s/0000", None)).await;
+    assert_eq!(unknown_status, StatusCode::NOT_FOUND);
+    // A miss is a counted guess, as on the join: the same caller previewing again inside the
+    // spacing window is refused before any lookup.
+    assert_eq!(
+        call(&public, req("GET", "/survey/s/0000", None)).await.0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
     module.survey_write_service().end_session(survey_id).await.expect("end");
+    tokio::time::sleep(std::time::Duration::from_millis(1050)).await;
     let (dead_status, _, dead_body) = call(&public, req("GET", &format!("/survey/s/{code}"), None)).await;
     assert_eq!(dead_status, StatusCode::NOT_FOUND);
     assert_eq!(unknown_body, dead_body, "unknown and dead codes are indistinguishable");

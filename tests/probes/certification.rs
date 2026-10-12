@@ -38,9 +38,10 @@ async fn pass_cert(
     final_row.id
 }
 
-/// Producer-side exactly-once: of two successful completions in one
-/// attempt pool, only the FIRST publishes the CertificationPassed fact —
-/// the pool gate (prior successes) answers "already certified".
+/// Exactly-once per user: every passing completion publishes, and every
+/// publish for one user carries the SAME grant key (certification ref +
+/// `user:{id}`), so the consumer's grant-key unique grants the badge once
+/// however many times, or however concurrently, the user passes.
 #[tokio::test]
 async fn p11_certification_exactly_once() {
     let db = TestDb::new("cert_once").await;
@@ -54,24 +55,31 @@ async fn p11_certification_exactly_once() {
     let user = Uuid::new_v4();
     let first = pass_cert(&svc, &token, "cert-once@example.com", user, q1).await;
 
-    // The fact crossed the port exactly once, field-for-field.
     let delivered = grant.delivered();
-    assert_eq!(delivered.len(), 1, "the first success published exactly one fact");
+    assert_eq!(delivered.len(), 1, "the first success published one fact");
     let fact = &delivered[0];
     assert_eq!(fact.certification_ref, format!("survey:{survey_id}"));
     assert_eq!(fact.survey_ref, Some(survey_id));
-    assert_eq!(fact.attempt_ref, first.to_string(), "the WINNING attempt is the ref");
+    assert_eq!(fact.attempt_ref, format!("user:{user}"), "the grant is keyed on the user");
     assert_eq!(fact.recipient_user_id, user);
     assert_eq!(fact.badge_key, "probe-badge");
 
-    // A SECOND successful completion in the same pool: no second publish.
+    // A SECOND successful completion by the same user publishes under the
+    // same key — the consumer converges on the first grant.
     let second = pass_cert(&svc, &token, "cert-once@example.com", user, q1).await;
     assert_ne!(first, second);
+    let delivered = grant.delivered();
+    assert_eq!(delivered.len(), 2);
     assert_eq!(
-        grant.delivered().len(),
-        1,
-        "the pool gate suppresses the repeat publication"
+        (delivered[0].certification_ref.clone(), delivered[0].attempt_ref.clone()),
+        (delivered[1].certification_ref.clone(), delivered[1].attempt_ref.clone()),
+        "one user, one grant key"
     );
+
+    // A different user typing the same email is a different grant.
+    let other = Uuid::new_v4();
+    pass_cert(&svc, &token, "cert-once@example.com", other, q1).await;
+    assert_eq!(grant.delivered()[2].attempt_ref, format!("user:{other}"));
 
     // The completion fact itself fired for BOTH (it is per-input, the
     // certification gate is per-pool).

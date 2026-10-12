@@ -48,7 +48,13 @@ use crate::infrastructure::persistence::survey_session_repository::SurveySession
 #[derive(Debug, thiserror::Error)]
 pub enum SurveyWriteError {
     #[error("database error: {0}")]
-    Db(#[from] sqlx::Error),
+    Db(sqlx::Error),
+    /// A unique key refused the write (two writers raced for one slot).
+    #[error("the write conflicts with an existing record: {0}")]
+    Conflict(String),
+    /// A database check refused the row the write would have produced.
+    #[error("the write breaks a database rule: {0}")]
+    RuleViolated(String),
     #[error("internal error: {0}")]
     Internal(String),
     #[error("no token secret is configured (set SURVEY_TOKEN_SECRET or pass one at composition)")]
@@ -126,12 +132,43 @@ pub enum SurveyWriteError {
     OverwriteRefused { question_id: Uuid },
 }
 
+impl From<sqlx::Error> for SurveyWriteError {
+    /// A database refusal is the caller's answer, not an internal error: the attempt-state and
+    /// score-drift triggers keep their typed variants, a unique violation is a conflict and any
+    /// other check is a broken rule. Everything else stays a database error.
+    fn from(e: sqlx::Error) -> Self {
+        let Some(db) = e.as_database_error() else {
+            return Self::Db(e);
+        };
+        let message = db.message().to_string();
+        match db.code().as_deref() {
+            Some("23505") => Self::Conflict(message),
+            Some("23514") if message.contains("not monotonic") => {
+                Self::StateNotMonotonic { detail: message }
+            }
+            Some("23514") if message.contains("score drift refused") => {
+                // The trigger names the line: `survey score drift refused (line <id>)`.
+                let line_id = message
+                    .split("(line ")
+                    .nth(1)
+                    .and_then(|rest| Uuid::parse_str(rest.trim_end_matches(')')).ok())
+                    .unwrap_or_else(Uuid::nil);
+                Self::ScoreDriftRefused { line_id, attempt_no: 0 }
+            }
+            Some("23514") | Some("23502") | Some("23503") | Some("P0001") => Self::RuleViolated(message),
+            _ => Self::Db(e),
+        }
+    }
+}
+
 impl SurveyWriteError {
     /// Stable machine code. `AttemptNotSubmittable` and `AttemptExpired`
     /// deliberately share one code — the body must not carry an oracle.
     pub fn code(&self) -> &'static str {
         match self {
             Self::Db(_) => "database_error",
+            Self::Conflict(_) => "survey_conflict",
+            Self::RuleViolated(_) => "survey_rule_violated",
             Self::Internal(_) => "internal_error",
             Self::SecretNotConfigured => "survey_secret_not_configured",
             Self::SurveyNotFound(_) => "survey_not_found",
@@ -182,7 +219,8 @@ impl SurveyWriteError {
             | Self::SurveyTimeLimitExceeded
             | Self::QuestionTimeLimitExceeded
             | Self::OverwriteRefused { .. } => 409,
-            Self::ValidationFailed { .. } => 422,
+            Self::ValidationFailed { .. } | Self::RuleViolated(_) => 422,
+            Self::Conflict(_) => 409,
             Self::NoNextQuestion | Self::SessionCodeExhausted | Self::SessionCodeNotValid => 409,
         }
     }
@@ -337,7 +375,7 @@ impl SurveyWriteService {
     where
         F: FnOnce(&mut Survey),
     {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let mut survey = SurveySessionRepository::find_survey_by_id(&mut tx, survey_id)
             .await?
             .ok_or(SurveyWriteError::SurveyNotFound(survey_id))?;
@@ -393,7 +431,7 @@ impl SurveyWriteService {
             survey.access_token = Uuid::new_v4().to_string();
         }
         apply_survey_clamps(&mut survey, false);
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let created = persist_survey(&mut tx, &survey).await?;
         tx.commit().await?;
         Ok(created)
@@ -425,7 +463,7 @@ impl SurveyWriteService {
         // fires BEFORE any minting (a code minted for a survey that can
         // never run would burn a namespace slot for nothing).
         {
-            let mut conn = self.pool.acquire().await?;
+            let mut conn = crate::request_pool::begin(&self.pool).await?;
             let survey = SurveySessionRepository::find_survey_by_id(&mut conn, survey_id)
                 .await?
                 .ok_or(SurveyWriteError::SurveyNotFound(survey_id))?;
@@ -443,7 +481,7 @@ impl SurveyWriteService {
         for digits in SESSION_CODE_MIN_DIGITS..=SESSION_CODE_MAX_DIGITS {
             for _ in 0..SESSION_CODE_ATTEMPTS_PER_RUNG {
                 let candidate = SurveySessionRepository::candidate_code(digits);
-                let mut tx = self.pool.begin().await?;
+                let mut tx = crate::request_pool::begin(&self.pool).await?;
                 // Availability pre-check (the partial UNIQUE is the
                 // decider; this only avoids most retry aborts).
                 let taken: bool = sqlx::query_scalar::<_, bool>(
@@ -455,8 +493,13 @@ impl SurveyWriteService {
                 if taken {
                     continue;
                 }
-                match SurveySessionRepository::arm_session(&mut tx, survey_id, &candidate, Utc::now())
-                    .await?
+                // The pre-check sees only the caller's fence; a code another unit holds
+                // surfaces as the unique violation, which is one more collision.
+                let armed = match SurveySessionRepository::arm_session(&mut tx, survey_id, &candidate, Utc::now()).await {
+                    Err(e) if e.as_database_error().and_then(|d| d.code()).as_deref() == Some("23505") => continue,
+                    other => other?,
+                };
+                match armed
                 {
                     Some(survey) => {
                         tx.commit().await?;
@@ -478,7 +521,7 @@ impl SurveyWriteService {
     /// `now + 1 s` (server-delay grace); the pushed payload carries the
     /// PRE-write instant.
     pub async fn advance_session(&self, survey_id: Uuid) -> Result<Survey, SurveyWriteError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let survey = SurveySessionRepository::lock_survey_for_update(&mut tx, survey_id)
             .await?
             .ok_or(SurveyWriteError::SurveyNotFound(survey_id))?;
@@ -537,7 +580,7 @@ impl SurveyWriteService {
     /// and by the `survey_session_certification_disjoint` CHECK, so the
     /// bypass can never skip a certification.
     pub async fn end_session(&self, survey_id: Uuid) -> Result<u64, SurveyWriteError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let survey = SurveySessionRepository::lock_survey_for_update(&mut tx, survey_id)
             .await?
             .ok_or(SurveyWriteError::SurveyNotFound(survey_id))?;
@@ -567,7 +610,7 @@ impl SurveyWriteService {
         mut question: crate::domain::entity::Question,
     ) -> Result<crate::domain::entity::Question, SurveyWriteError> {
         apply_question_clamps(&mut question);
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         SurveySessionRepository::find_survey_by_id(&mut tx, question.survey_id)
             .await?
             .ok_or(SurveyWriteError::SurveyNotFound(question.survey_id))?;
@@ -821,7 +864,7 @@ impl SurveyWriteService {
         &self,
         code: &str,
     ) -> Result<Option<serde_json::Value>, SurveyWriteError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = crate::request_pool::begin(&self.pool).await?;
         let survey = SurveySessionRepository::find_survey_by_session_code(&mut tx, code).await?;
         let Some(survey) = survey else {
             tx.commit().await?;
