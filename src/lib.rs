@@ -55,9 +55,6 @@ pub use application::service::UserInputService;
 pub use application::service::UserInputLineService;
 pub use application::service::SurveyUserInputPredefinedQuestionService;
 
-// Re-exports - Validation
-pub use application::validator::{ValidationError, ValidationResult};
-
 use std::sync::Arc;
 use axum::Router;
 use sqlx::PgPool;
@@ -249,7 +246,7 @@ impl SurveyModuleBuilder {
 
         // Question service
         let question_repository = Arc::new(QuestionRepository::new(db_pool.clone()));
-        let question_service = Arc::new(QuestionService::with_repository(question_repository.clone()));
+        let question_service = Arc::new(QuestionService::with_repository(question_repository.clone()).with_guard(Arc::new(crate::application::service::QuestionRowRules)));
 
         // QuestionAnswer service
         let question_answer_repository = Arc::new(QuestionAnswerRepository::new(db_pool.clone()));
@@ -257,7 +254,7 @@ impl SurveyModuleBuilder {
 
         // SurveyQuestionTriggeringAnswer service
         let survey_question_triggering_answer_repository = Arc::new(SurveyQuestionTriggeringAnswerRepository::new(db_pool.clone()));
-        let survey_question_triggering_answer_service = Arc::new(SurveyQuestionTriggeringAnswerService::with_repository(survey_question_triggering_answer_repository.clone()));
+        let survey_question_triggering_answer_service = Arc::new(SurveyQuestionTriggeringAnswerService::with_repository(survey_question_triggering_answer_repository.clone()).with_guard(Arc::new(crate::application::service::SurveyQuestionTriggeringAnswerRowRules)));
 
         // Survey service
         let survey_repository = Arc::new(SurveyRepository::new(db_pool.clone()));
@@ -277,11 +274,11 @@ impl SurveyModuleBuilder {
 
         // UserInputLine service
         let user_input_line_repository = Arc::new(UserInputLineRepository::new(db_pool.clone()));
-        let user_input_line_service = Arc::new(UserInputLineService::with_repository(user_input_line_repository.clone()));
+        let user_input_line_service = Arc::new(UserInputLineService::with_repository(user_input_line_repository.clone()).with_guard(Arc::new(crate::application::service::UserInputLineRowRules)));
 
         // SurveyUserInputPredefinedQuestion service
         let survey_user_input_predefined_question_repository = Arc::new(SurveyUserInputPredefinedQuestionRepository::new(db_pool.clone()));
-        let survey_user_input_predefined_question_service = Arc::new(SurveyUserInputPredefinedQuestionService::with_repository(survey_user_input_predefined_question_repository.clone()));
+        let survey_user_input_predefined_question_service = Arc::new(SurveyUserInputPredefinedQuestionService::with_repository(survey_user_input_predefined_question_repository.clone()).with_guard(Arc::new(crate::application::service::SurveyUserInputPredefinedQuestionRowRules)));
 
 
         // The extension builds its own state from what the generated build made.

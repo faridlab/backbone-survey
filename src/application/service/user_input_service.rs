@@ -32,9 +32,10 @@ pub type UserInputService = GenericCrudService<
     UserInputRepository,
 >;
 
-/// The row rules the schema declares for UserInput, checked against the row a create or
-/// update would store. The generated build attaches it to [`UserInputService`]. Every rule
-/// runs in shadow: a break is logged under `backbone::write_guard` and the write goes ahead.
+/// The rules the schema declares for UserInput, checked against the row a create or update
+/// would store. The generated build attaches it to [`UserInputService`]. A refusing rule's
+/// break answers 422; a rule in shadow is logged under `backbone::write_guard` and the
+/// write goes ahead.
 pub struct UserInputRowRules;
 
 #[async_trait::async_trait]
@@ -56,11 +57,40 @@ impl backbone_core::write_guard::WriteGuard<UserInput> for UserInputRowRules {
         let row = &row;
         let old = ctx.before.and_then(|b| serde_json::to_value(b).ok());
         let mut shadow = Vec::new();
+        let mut refuse = Vec::new();
         // `state` belongs to a state machine: only its verbs move it
         if update && ctx.transition.is_none() && r::changed(old.as_ref(), row, &["state"]) {
             shadow.push(Violation::new("state", "state_field_verbs_only", "the state field moves only through its verbs"));
         }
-        GuardOutcome { refuse: Vec::new(), shadow }
+        // `survey_id_required` (@required on UserInput.survey_id)
+        if (create || (update && r::changed(old.as_ref(), row, &["survey_id"]))) && !r::holds(&r::and(r::is_not_null(r::field(row, "survey_id")), r::not(r::is_empty(r::trim(r::field(row, "survey_id")))))) {
+            refuse.push(Violation::new("survey_id", "required", "survey_id is required"));
+        }
+        // `token_nonce_required` (@required on UserInput.token_nonce)
+        if (create || (update && r::changed(old.as_ref(), row, &["token_nonce"]))) && !r::holds(&r::and(r::is_not_null(r::field(row, "token_nonce")), r::not(r::is_empty(r::trim(r::field(row, "token_nonce")))))) {
+            refuse.push(Violation::new("token_nonce", "required", "token_nonce is required"));
+        }
+        // `token_nonce_max_length` (@max(64) on UserInput.token_nonce)
+        if (create || (update && r::changed(old.as_ref(), row, &["token_nonce"]))) && !r::holds(&r::le(r::length(r::field(row, "token_nonce")), r::Val::Num(64.0_f64))) {
+            shadow.push(Violation::new("token_nonce", "max_length", "token_nonce must be at most 64 characters").with_param("max", 64_i64));
+        }
+        // `invite_token_max_length` (@max(64) on UserInput.invite_token)
+        if (create || (update && r::changed(old.as_ref(), row, &["invite_token"]))) && !r::holds(&r::le(r::length(r::field(row, "invite_token")), r::Val::Num(64.0_f64))) {
+            shadow.push(Violation::new("invite_token", "max_length", "invite_token must be at most 64 characters").with_param("max", 64_i64));
+        }
+        // `email_max_length` (@max(320) on UserInput.email)
+        if (create || (update && r::changed(old.as_ref(), row, &["email"]))) && !r::holds(&r::le(r::length(r::field(row, "email")), r::Val::Num(320.0_f64))) {
+            shadow.push(Violation::new("email", "max_length", "email must be at most 320 characters").with_param("max", 320_i64));
+        }
+        // `nickname_max_length` (@max(120) on UserInput.nickname)
+        if (create || (update && r::changed(old.as_ref(), row, &["nickname"]))) && !r::holds(&r::le(r::length(r::field(row, "nickname")), r::Val::Num(120.0_f64))) {
+            shadow.push(Violation::new("nickname", "max_length", "nickname must be at most 120 characters").with_param("max", 120_i64));
+        }
+        // `wire_identity_key_max_length` (@max(120) on UserInput.wire_identity_key)
+        if (create || (update && r::changed(old.as_ref(), row, &["wire_identity_key"]))) && !r::holds(&r::le(r::length(r::field(row, "wire_identity_key")), r::Val::Num(120.0_f64))) {
+            shadow.push(Violation::new("wire_identity_key", "max_length", "wire_identity_key must be at most 120 characters").with_param("max", 120_i64));
+        }
+        GuardOutcome { refuse, shadow }
     }
 }
 

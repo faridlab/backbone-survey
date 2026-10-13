@@ -32,3 +32,45 @@ pub type QuestionService = GenericCrudService<
     QuestionRepository,
 >;
 
+/// The rules the schema declares for Question, checked against the row a create or update
+/// would store. The generated build attaches it to [`QuestionService`]. A refusing rule's
+/// break answers 422; a rule in shadow is logged under `backbone::write_guard` and the
+/// write goes ahead.
+pub struct QuestionRowRules;
+
+#[async_trait::async_trait]
+impl backbone_core::write_guard::WriteGuard<Question> for QuestionRowRules {
+    async fn check(
+        &self,
+        ctx: &backbone_core::write_guard::WriteCtx<'_, Question>,
+    ) -> backbone_core::write_guard::GuardOutcome {
+        use backbone_core::row_rule as r;
+        use backbone_core::violation::Violation;
+        use backbone_core::write_guard::{GuardOutcome, WriteKind};
+        let (create, update) = (ctx.kind == WriteKind::Create, ctx.kind == WriteKind::Update);
+        let Some(after) = ctx.after.filter(|_| create || update) else {
+            return GuardOutcome::allow();
+        };
+        let Ok(row) = serde_json::to_value(after) else {
+            return GuardOutcome::allow();
+        };
+        let row = &row;
+        let old = ctx.before.and_then(|b| serde_json::to_value(b).ok());
+        let mut shadow = Vec::new();
+        let mut refuse = Vec::new();
+        // `survey_id_required` (@required on Question.survey_id)
+        if (create || (update && r::changed(old.as_ref(), row, &["survey_id"]))) && !r::holds(&r::and(r::is_not_null(r::field(row, "survey_id")), r::not(r::is_empty(r::trim(r::field(row, "survey_id")))))) {
+            refuse.push(Violation::new("survey_id", "required", "survey_id is required"));
+        }
+        // `title_required` (@required on Question.title)
+        if (create || (update && r::changed(old.as_ref(), row, &["title"]))) && !r::holds(&r::and(r::is_not_null(r::field(row, "title")), r::not(r::is_empty(r::trim(r::field(row, "title")))))) {
+            refuse.push(Violation::new("title", "required", "title is required"));
+        }
+        // `title_max_length` (@max(255) on Question.title)
+        if (create || (update && r::changed(old.as_ref(), row, &["title"]))) && !r::holds(&r::le(r::length(r::field(row, "title")), r::Val::Num(255.0_f64))) {
+            shadow.push(Violation::new("title", "max_length", "title must be at most 255 characters").with_param("max", 255_i64));
+        }
+        GuardOutcome { refuse, shadow }
+    }
+}
+

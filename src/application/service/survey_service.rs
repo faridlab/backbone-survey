@@ -32,9 +32,10 @@ pub type SurveyService = GenericCrudService<
     SurveyRepository,
 >;
 
-/// The row rules the schema declares for Survey, checked against the row a create or
-/// update would store. The generated build attaches it to [`SurveyService`]. Every rule
-/// runs in shadow: a break is logged under `backbone::write_guard` and the write goes ahead.
+/// The rules the schema declares for Survey, checked against the row a create or update
+/// would store. The generated build attaches it to [`SurveyService`]. A refusing rule's
+/// break answers 422; a rule in shadow is logged under `backbone::write_guard` and the
+/// write goes ahead.
 pub struct SurveyRowRules;
 
 #[async_trait::async_trait]
@@ -56,11 +57,32 @@ impl backbone_core::write_guard::WriteGuard<Survey> for SurveyRowRules {
         let row = &row;
         let old = ctx.before.and_then(|b| serde_json::to_value(b).ok());
         let mut shadow = Vec::new();
+        let mut refuse = Vec::new();
         // `session_state` belongs to a state machine: only its verbs move it
         if update && ctx.transition.is_none() && r::changed(old.as_ref(), row, &["session_state"]) {
             shadow.push(Violation::new("session_state", "state_field_verbs_only", "the state field moves only through its verbs"));
         }
-        GuardOutcome { refuse: Vec::new(), shadow }
+        // `title_required` (@required on Survey.title)
+        if (create || (update && r::changed(old.as_ref(), row, &["title"]))) && !r::holds(&r::and(r::is_not_null(r::field(row, "title")), r::not(r::is_empty(r::trim(r::field(row, "title")))))) {
+            refuse.push(Violation::new("title", "required", "title is required"));
+        }
+        // `title_max_length` (@max(255) on Survey.title)
+        if (create || (update && r::changed(old.as_ref(), row, &["title"]))) && !r::holds(&r::le(r::length(r::field(row, "title")), r::Val::Num(255.0_f64))) {
+            shadow.push(Violation::new("title", "max_length", "title must be at most 255 characters").with_param("max", 255_i64));
+        }
+        // `access_token_required` (@required on Survey.access_token)
+        if (create || (update && r::changed(old.as_ref(), row, &["access_token"]))) && !r::holds(&r::and(r::is_not_null(r::field(row, "access_token")), r::not(r::is_empty(r::trim(r::field(row, "access_token")))))) {
+            refuse.push(Violation::new("access_token", "required", "access_token is required"));
+        }
+        // `certification_badge_key_max_length` (@max(120) on Survey.certification_badge_key)
+        if (create || (update && r::changed(old.as_ref(), row, &["certification_badge_key"]))) && !r::holds(&r::le(r::length(r::field(row, "certification_badge_key")), r::Val::Num(120.0_f64))) {
+            shadow.push(Violation::new("certification_badge_key", "max_length", "certification_badge_key must be at most 120 characters").with_param("max", 120_i64));
+        }
+        // `session_code_max_length` (@max(16) on Survey.session_code)
+        if (create || (update && r::changed(old.as_ref(), row, &["session_code"]))) && !r::holds(&r::le(r::length(r::field(row, "session_code")), r::Val::Num(16.0_f64))) {
+            shadow.push(Violation::new("session_code", "max_length", "session_code must be at most 16 characters").with_param("max", 16_i64));
+        }
+        GuardOutcome { refuse, shadow }
     }
 }
 
