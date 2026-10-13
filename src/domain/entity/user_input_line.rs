@@ -362,7 +362,7 @@ impl backbone_orm::EntityRepoMeta for UserInputLine {
         }
     }
     fn relations() -> &'static [(&'static str, &'static str, &'static str)] {
-        &[("userInput", "survey_user_inputs", "userInputId"), ("question", "survey_questions", "questionId")]
+        &[("userInput", "survey_user_inputs", "userInputId"), ("question", "survey_questions", "questionId"), ("survey", "survey_surveys", "surveyId")]
     }
 }
 

@@ -1,0 +1,12 @@
+-- Down: drop the declared foreign keys for survey module
+ALTER TABLE IF EXISTS survey.survey_user_input_predefined_questions DROP CONSTRAINT IF EXISTS fk_survey_user_input_predefined_questions_question_id;
+ALTER TABLE IF EXISTS survey.survey_user_input_predefined_questions DROP CONSTRAINT IF EXISTS fk_survey_user_input_predefined_questions_user_input_id;
+ALTER TABLE IF EXISTS survey.survey_user_input_lines DROP CONSTRAINT IF EXISTS fk_survey_user_input_lines_survey_id;
+ALTER TABLE IF EXISTS survey.survey_user_input_lines DROP CONSTRAINT IF EXISTS fk_survey_user_input_lines_question_id;
+ALTER TABLE IF EXISTS survey.survey_user_input_lines DROP CONSTRAINT IF EXISTS fk_survey_user_input_lines_user_input_id;
+ALTER TABLE IF EXISTS survey.survey_user_inputs DROP CONSTRAINT IF EXISTS fk_survey_user_inputs_survey_id;
+ALTER TABLE IF EXISTS survey.survey_survey_langs DROP CONSTRAINT IF EXISTS fk_survey_survey_langs_survey_id;
+ALTER TABLE IF EXISTS survey.survey_survey_restrict_users DROP CONSTRAINT IF EXISTS fk_survey_survey_restrict_users_survey_id;
+ALTER TABLE IF EXISTS survey.survey_question_triggering_answers DROP CONSTRAINT IF EXISTS fk_survey_question_triggering_answers_suggested_answer_id;
+ALTER TABLE IF EXISTS survey.survey_question_triggering_answers DROP CONSTRAINT IF EXISTS fk_survey_question_triggering_answers_question_id;
+ALTER TABLE IF EXISTS survey.survey_questions DROP CONSTRAINT IF EXISTS fk_survey_questions_survey_id;
