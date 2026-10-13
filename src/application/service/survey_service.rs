@@ -68,7 +68,7 @@ impl backbone_core::write_guard::WriteGuard<Survey> for SurveyRowRules {
         }
         // `title_max_length` (@max(255) on Survey.title)
         if (create || (update && r::changed(old.as_ref(), row, &["title"]))) && !r::holds(&r::le(r::length(r::field(row, "title")), r::Val::Num(255.0_f64))) {
-            shadow.push(Violation::new("title", "max_length", "title must be at most 255 characters").with_param("max", 255_i64));
+            refuse.push(Violation::new("title", "max_length", "title must be at most 255 characters").with_param("max", 255_i64));
         }
         // `access_token_required` (@required on Survey.access_token)
         if (create || (update && r::changed(old.as_ref(), row, &["access_token"]))) && !r::holds(&r::and(r::is_not_null(r::field(row, "access_token")), r::not(r::is_empty(r::trim(r::field(row, "access_token")))))) {
@@ -76,11 +76,11 @@ impl backbone_core::write_guard::WriteGuard<Survey> for SurveyRowRules {
         }
         // `certification_badge_key_max_length` (@max(120) on Survey.certification_badge_key)
         if (create || (update && r::changed(old.as_ref(), row, &["certification_badge_key"]))) && !r::holds(&r::le(r::length(r::field(row, "certification_badge_key")), r::Val::Num(120.0_f64))) {
-            shadow.push(Violation::new("certification_badge_key", "max_length", "certification_badge_key must be at most 120 characters").with_param("max", 120_i64));
+            refuse.push(Violation::new("certification_badge_key", "max_length", "certification_badge_key must be at most 120 characters").with_param("max", 120_i64));
         }
         // `session_code_max_length` (@max(16) on Survey.session_code)
         if (create || (update && r::changed(old.as_ref(), row, &["session_code"]))) && !r::holds(&r::le(r::length(r::field(row, "session_code")), r::Val::Num(16.0_f64))) {
-            shadow.push(Violation::new("session_code", "max_length", "session_code must be at most 16 characters").with_param("max", 16_i64));
+            refuse.push(Violation::new("session_code", "max_length", "session_code must be at most 16 characters").with_param("max", 16_i64));
         }
         GuardOutcome { refuse, shadow }
     }

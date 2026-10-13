@@ -72,23 +72,23 @@ impl backbone_core::write_guard::WriteGuard<UserInput> for UserInputRowRules {
         }
         // `token_nonce_max_length` (@max(64) on UserInput.token_nonce)
         if (create || (update && r::changed(old.as_ref(), row, &["token_nonce"]))) && !r::holds(&r::le(r::length(r::field(row, "token_nonce")), r::Val::Num(64.0_f64))) {
-            shadow.push(Violation::new("token_nonce", "max_length", "token_nonce must be at most 64 characters").with_param("max", 64_i64));
+            refuse.push(Violation::new("token_nonce", "max_length", "token_nonce must be at most 64 characters").with_param("max", 64_i64));
         }
         // `invite_token_max_length` (@max(64) on UserInput.invite_token)
         if (create || (update && r::changed(old.as_ref(), row, &["invite_token"]))) && !r::holds(&r::le(r::length(r::field(row, "invite_token")), r::Val::Num(64.0_f64))) {
-            shadow.push(Violation::new("invite_token", "max_length", "invite_token must be at most 64 characters").with_param("max", 64_i64));
+            refuse.push(Violation::new("invite_token", "max_length", "invite_token must be at most 64 characters").with_param("max", 64_i64));
         }
         // `email_max_length` (@max(320) on UserInput.email)
         if (create || (update && r::changed(old.as_ref(), row, &["email"]))) && !r::holds(&r::le(r::length(r::field(row, "email")), r::Val::Num(320.0_f64))) {
-            shadow.push(Violation::new("email", "max_length", "email must be at most 320 characters").with_param("max", 320_i64));
+            refuse.push(Violation::new("email", "max_length", "email must be at most 320 characters").with_param("max", 320_i64));
         }
         // `nickname_max_length` (@max(120) on UserInput.nickname)
         if (create || (update && r::changed(old.as_ref(), row, &["nickname"]))) && !r::holds(&r::le(r::length(r::field(row, "nickname")), r::Val::Num(120.0_f64))) {
-            shadow.push(Violation::new("nickname", "max_length", "nickname must be at most 120 characters").with_param("max", 120_i64));
+            refuse.push(Violation::new("nickname", "max_length", "nickname must be at most 120 characters").with_param("max", 120_i64));
         }
         // `wire_identity_key_max_length` (@max(120) on UserInput.wire_identity_key)
         if (create || (update && r::changed(old.as_ref(), row, &["wire_identity_key"]))) && !r::holds(&r::le(r::length(r::field(row, "wire_identity_key")), r::Val::Num(120.0_f64))) {
-            shadow.push(Violation::new("wire_identity_key", "max_length", "wire_identity_key must be at most 120 characters").with_param("max", 120_i64));
+            refuse.push(Violation::new("wire_identity_key", "max_length", "wire_identity_key must be at most 120 characters").with_param("max", 120_i64));
         }
         GuardOutcome { refuse, shadow }
     }
