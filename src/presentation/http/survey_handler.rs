@@ -221,13 +221,9 @@ pub async fn arm_transition(
                 && (have.len() == want.len() || (have.len() < want.len() && have.last() == Some(&"*")))
         });
         let has_specific_perm = granted("survey:transition:arm");
-        let has_update_perm = granted("survey:update");
         let _ = &allowed_roles;
         if !has_specific_perm {
-            if !has_update_perm {
-                return (StatusCode::FORBIDDEN, Json(ApiResponse::<SurveyResponseDto>::error("Insufficient permissions for arm transition")));
-            }
-            tracing::warn!(target: "backbone::write_guard", entity = "Survey", verb = "arm", code = "transition_by_update_permission", "a transition granted only by survey:update, running in shadow; it needs survey:transition:arm");
+            return (StatusCode::FORBIDDEN, Json(ApiResponse::<SurveyResponseDto>::error("arm needs survey:transition:arm")));
         }
     }
 
@@ -287,13 +283,9 @@ pub async fn start_transition(
                 && (have.len() == want.len() || (have.len() < want.len() && have.last() == Some(&"*")))
         });
         let has_specific_perm = granted("survey:transition:start");
-        let has_update_perm = granted("survey:update");
         let _ = &allowed_roles;
         if !has_specific_perm {
-            if !has_update_perm {
-                return (StatusCode::FORBIDDEN, Json(ApiResponse::<SurveyResponseDto>::error("Insufficient permissions for start transition")));
-            }
-            tracing::warn!(target: "backbone::write_guard", entity = "Survey", verb = "start", code = "transition_by_update_permission", "a transition granted only by survey:update, running in shadow; it needs survey:transition:start");
+            return (StatusCode::FORBIDDEN, Json(ApiResponse::<SurveyResponseDto>::error("start needs survey:transition:start")));
         }
     }
 
@@ -353,13 +345,9 @@ pub async fn end_transition(
                 && (have.len() == want.len() || (have.len() < want.len() && have.last() == Some(&"*")))
         });
         let has_specific_perm = granted("survey:transition:end");
-        let has_update_perm = granted("survey:update");
         let _ = &allowed_roles;
         if !has_specific_perm {
-            if !has_update_perm {
-                return (StatusCode::FORBIDDEN, Json(ApiResponse::<SurveyResponseDto>::error("Insufficient permissions for end transition")));
-            }
-            tracing::warn!(target: "backbone::write_guard", entity = "Survey", verb = "end", code = "transition_by_update_permission", "a transition granted only by survey:update, running in shadow; it needs survey:transition:end");
+            return (StatusCode::FORBIDDEN, Json(ApiResponse::<SurveyResponseDto>::error("end needs survey:transition:end")));
         }
     }
 

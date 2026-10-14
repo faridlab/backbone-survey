@@ -221,13 +221,9 @@ pub async fn begin_transition(
                 && (have.len() == want.len() || (have.len() < want.len() && have.last() == Some(&"*")))
         });
         let has_specific_perm = granted("user_input:transition:begin");
-        let has_update_perm = granted("user_input:update");
         let _ = &allowed_roles;
         if !has_specific_perm {
-            if !has_update_perm {
-                return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("Insufficient permissions for begin transition")));
-            }
-            tracing::warn!(target: "backbone::write_guard", entity = "UserInput", verb = "begin", code = "transition_by_update_permission", "a transition granted only by user_input:update, running in shadow; it needs user_input:transition:begin");
+            return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("begin needs user_input:transition:begin")));
         }
     }
 
@@ -284,13 +280,9 @@ pub async fn mark_done_transition(
                 && (have.len() == want.len() || (have.len() < want.len() && have.last() == Some(&"*")))
         });
         let has_specific_perm = granted("user_input:transition:mark_done");
-        let has_update_perm = granted("user_input:update");
         let _ = &allowed_roles;
         if !has_specific_perm {
-            if !has_update_perm {
-                return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("Insufficient permissions for mark_done transition")));
-            }
-            tracing::warn!(target: "backbone::write_guard", entity = "UserInput", verb = "mark_done", code = "transition_by_update_permission", "a transition granted only by user_input:update, running in shadow; it needs user_input:transition:mark_done");
+            return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("mark_done needs user_input:transition:mark_done")));
         }
     }
 
@@ -347,13 +339,9 @@ pub async fn session_bulk_done_transition(
                 && (have.len() == want.len() || (have.len() < want.len() && have.last() == Some(&"*")))
         });
         let has_specific_perm = granted("user_input:transition:session_bulk_done");
-        let has_update_perm = granted("user_input:update");
         let _ = &allowed_roles;
         if !has_specific_perm {
-            if !has_update_perm {
-                return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("Insufficient permissions for session_bulk_done transition")));
-            }
-            tracing::warn!(target: "backbone::write_guard", entity = "UserInput", verb = "session_bulk_done", code = "transition_by_update_permission", "a transition granted only by user_input:update, running in shadow; it needs user_input:transition:session_bulk_done");
+            return (StatusCode::FORBIDDEN, Json(ApiResponse::<serde_json::Value>::error("session_bulk_done needs user_input:transition:session_bulk_done")));
         }
     }
 
