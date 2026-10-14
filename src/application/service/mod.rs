@@ -34,5 +34,77 @@ pub use user_input_service::UserInputRowRules;
 pub use user_input_line_service::UserInputLineRowRules;
 pub use survey_user_input_predefined_question_service::SurveyUserInputPredefinedQuestionRowRules;
 
+/// A `QuestionService` over `repository` with its write guard attached: the way to build it, so its writes are
+/// served only with the rules the schema declares.
+pub fn build_question_service(
+    repository: std::sync::Arc<crate::infrastructure::persistence::QuestionRepository>,
+) -> QuestionService {
+    QuestionService::with_repository(repository).with_guard(std::sync::Arc::new(QuestionRowRules))
+}
+
+/// A `QuestionAnswerService` over `repository`: the way to build it, so its writes are
+/// served only with the rules the schema declares.
+pub fn build_question_answer_service(
+    repository: std::sync::Arc<crate::infrastructure::persistence::QuestionAnswerRepository>,
+) -> QuestionAnswerService {
+    QuestionAnswerService::with_repository(repository)
+}
+
+/// A `SurveyQuestionTriggeringAnswerService` over `repository` with its write guard attached: the way to build it, so its writes are
+/// served only with the rules the schema declares.
+pub fn build_survey_question_triggering_answer_service(
+    repository: std::sync::Arc<crate::infrastructure::persistence::SurveyQuestionTriggeringAnswerRepository>,
+) -> SurveyQuestionTriggeringAnswerService {
+    SurveyQuestionTriggeringAnswerService::with_repository(repository).with_guard(std::sync::Arc::new(SurveyQuestionTriggeringAnswerRowRules))
+}
+
+/// A `SurveyService` over `repository` with its write guard attached: the way to build it, so its writes are
+/// served only with the rules the schema declares.
+pub fn build_survey_service(
+    repository: std::sync::Arc<crate::infrastructure::persistence::SurveyRepository>,
+) -> SurveyService {
+    SurveyService::with_repository(repository).with_guard(std::sync::Arc::new(SurveyRowRules))
+}
+
+/// A `SurveySurveyRestrictUserService` over `repository`: the way to build it, so its writes are
+/// served only with the rules the schema declares.
+pub fn build_survey_survey_restrict_user_service(
+    repository: std::sync::Arc<crate::infrastructure::persistence::SurveySurveyRestrictUserRepository>,
+) -> SurveySurveyRestrictUserService {
+    SurveySurveyRestrictUserService::with_repository(repository)
+}
+
+/// A `SurveySurveyLangService` over `repository`: the way to build it, so its writes are
+/// served only with the rules the schema declares.
+pub fn build_survey_survey_lang_service(
+    repository: std::sync::Arc<crate::infrastructure::persistence::SurveySurveyLangRepository>,
+) -> SurveySurveyLangService {
+    SurveySurveyLangService::with_repository(repository)
+}
+
+/// A `UserInputService` over `repository` with its write guard attached: the way to build it, so its writes are
+/// served only with the rules the schema declares.
+pub fn build_user_input_service(
+    repository: std::sync::Arc<crate::infrastructure::persistence::UserInputRepository>,
+) -> UserInputService {
+    UserInputService::with_repository(repository).with_guard(std::sync::Arc::new(UserInputRowRules))
+}
+
+/// A `UserInputLineService` over `repository` with its write guard attached: the way to build it, so its writes are
+/// served only with the rules the schema declares.
+pub fn build_user_input_line_service(
+    repository: std::sync::Arc<crate::infrastructure::persistence::UserInputLineRepository>,
+) -> UserInputLineService {
+    UserInputLineService::with_repository(repository).with_guard(std::sync::Arc::new(UserInputLineRowRules))
+}
+
+/// A `SurveyUserInputPredefinedQuestionService` over `repository` with its write guard attached: the way to build it, so its writes are
+/// served only with the rules the schema declares.
+pub fn build_survey_user_input_predefined_question_service(
+    repository: std::sync::Arc<crate::infrastructure::persistence::SurveyUserInputPredefinedQuestionRepository>,
+) -> SurveyUserInputPredefinedQuestionService {
+    SurveyUserInputPredefinedQuestionService::with_repository(repository).with_guard(std::sync::Arc::new(SurveyUserInputPredefinedQuestionRowRules))
+}
+
 // This directory's extension (hand-written; ADR-0031).
 include!("mod.ext.rs");
