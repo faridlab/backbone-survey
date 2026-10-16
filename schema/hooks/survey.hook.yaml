@@ -124,10 +124,11 @@ rules:
     name: denominator_frozen
     entity: SurveyUserInputPredefinedQuestion
     when: create input, score
-    assert: "the scoring service reads ONLY the input's predefined_question_ids snapshot (taken at create; random per section when selected); later survey edits NEVER change existing scores; mark_done prunes inactive conditional questions from the snapshot"
+    assert: "a score's denominator is the sum of the frozen answer scores of the scored questions in the input's predefined question snapshot, taken at create; a later edit of the survey's questions or label weights never changes it"
     error_code: denominator_violation
     enforcement: service
-    justification: "PARTLY: the denominator is snapshotted, but line scores use the live question and label scores, and random-per-section sampling takes every question."
+    enforced_by: "src/application/service/scoring_service.rs::fold_totals"
+    justification: "fold_totals sums the denominator from the snapshot's frozen_answer_score of its frozen_scored questions only, never from the live survey, and clamps the percentage to 0..=100. Not part of this rule and still open: a line's own score reads the live label score, and random-per-section sampling takes every question."
     # service-only justification: "which rows the scorer reads" is code; the
     # snapshot's existence is data (the junction table).
 
