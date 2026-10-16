@@ -53,7 +53,6 @@ pub struct CreateUserInputDto {
     #[cfg_attr(feature = "openapi", schema(example = true))]
     #[serde(alias = "test_entry")]
     pub test_entry: bool,
-    pub state: SurveyInputState,
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "start_datetime")]
     pub start_datetime: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "end_datetime")]
@@ -359,7 +358,7 @@ impl From<CreateUserInputDto> for UserInput {
             user_id: dto.user_id,
             wire_identity_key: dto.wire_identity_key,
             test_entry: dto.test_entry,
-            state: dto.state,
+            state: SurveyInputState::New,
             start_datetime: dto.start_datetime,
             end_datetime: dto.end_datetime,
             deadline: dto.deadline,

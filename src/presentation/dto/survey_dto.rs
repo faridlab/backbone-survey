@@ -95,8 +95,6 @@ pub struct CreateSurveyDto {
     pub certification_give_badge: bool,
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "certification_badge_key")]
     pub certification_badge_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "session_state")]
-    pub session_state: Option<SurveySessionState>,
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "session_code")]
     pub session_code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "session_question_id")]
@@ -507,7 +505,7 @@ impl From<CreateSurveyDto> for Survey {
             certification_report_layout: dto.certification_report_layout,
             certification_give_badge: dto.certification_give_badge,
             certification_badge_key: dto.certification_badge_key,
-            session_state: dto.session_state,
+            session_state: Some(SurveySessionState::Ready),
             session_code: dto.session_code,
             session_question_id: dto.session_question_id,
             session_start_time: dto.session_start_time,
