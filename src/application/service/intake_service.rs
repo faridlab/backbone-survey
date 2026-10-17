@@ -288,6 +288,7 @@ impl IntakeService {
         // (4) Overwrite gates + (storage dispatch).
         let is_set_answer =
             matches!(draft, AnswerDraft::Choice(_) | AnswerDraft::Matrix(_));
+        let is_choice_answer = matches!(draft, AnswerDraft::Choice(_));
         let existing_scalar = if is_set_answer {
             None
         } else {
@@ -363,7 +364,11 @@ impl IntakeService {
                 }
             }
             scalar_or_skip => {
-                // The scalar families + explicit skips: ONE line.
+                // The scalar families + explicit skips: ONE line. A choice or matrix answered with
+                // nothing replaces the lines it answered before, as a non-empty one does.
+                if is_set_answer {
+                    ScoringRepository::delete_question_lines(&mut tx, input.id, question.id).await?;
+                }
                 let (ch, tx_, num, scale, date, dt) = scalar_parts(scalar_or_skip);
                 if let Some(line) = existing_scalar {
                     // Go-back overwrite: values move, the score triple is
@@ -408,8 +413,11 @@ impl IntakeService {
 
         // (6) Conditional clearing: a choice answer that left a
         // conditional's trigger unchosen deletes its dependent lines.
+        // A choice answered with nothing leaves every trigger unchosen.
         if let AnswerDraft::Choice(chosen) = &draft {
             clear_inactive_conditionals(&mut tx, input.id, question.id, chosen).await?;
+        } else if is_choice_answer {
+            clear_inactive_conditionals(&mut tx, input.id, question.id, &[]).await?;
         }
 
         // (7) Fold the stored triple against the frozen denominator.

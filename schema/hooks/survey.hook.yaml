@@ -139,7 +139,8 @@ rules:
     assert: "answer_score / answer_is_correct / speed_seconds are written ONCE at submit. Any later change to them on a graded line is refused: the typed SurveyWriteError::ScoreDriftRefused on the service path, and the hand *monotonic* migration's BEFORE UPDATE trigger raises survey_score_drift_refused on the raw-SQL path (outside the regrade marker). The ONLY sanctioned recompute is the guarded regrade_question verb, which works from the STORED speed_seconds and value columns — never a fresh now()"
     error_code: survey_score_drift_refused
     enforcement: both
-    justification: "PARTLY: the drift trigger refuses an in-place change outside regrade and the regrade recomputes choice and matrix answers from their rows with the speed factor recorded at submit, but a choice resubmit replaces its lines by delete-and-insert, which the trigger does not see."
+    enforced_by: "migrations/20260831000001_survey_input_monotonic_guard.up.sql::survey_score_drift_refused, migrations/20261017180000_score_drift_covers_insert_and_delete.up.sql::survey_done_line_churn_refused"
+    justification: "The trigger survey_score_drift_refused refuses an in-place change to a line's score outside the regrade marker, and survey_done_line_churn_refused refuses adding a line to a done attempt or deleting one of its lines, so a delete-and-reinsert cannot rewrite a score after submit (tests/probes/integrity.rs i10_a_done_attempt_lines_cannot_be_deleted_or_added); both answer survey_score_drift_refused. regrade_question recomputes choice and matrix answers from their rows with the speed factor recorded at submit. Deleting an attempt takes its lines with it."
     # The SV-B2 "fixed loudly" mandate: never a silent overwrite, never a
     # silent re-derivation.
 
@@ -172,7 +173,8 @@ rules:
     assert: "scalar types UPSERT in place; choice and matrix DELETE-AND-RECREATE; an empty choice answer materializes a SKIPPED line; comments are ALWAYS char_box + value_char_box; save_as_email / save_as_nickname side-write the INPUT row; overwrite_existing is gated on users_can_go_back / save_as_* and refused loudly otherwise; inactive conditional answers are CLEARED (dependent lines deleted) at submit — scoring correctness over UX"
     error_code: intake_contract_violation
     enforcement: service
-    justification: "PARTLY: chosen labels must belong to the question and count once, a single choice takes one label and a simple matrix one column per row, and the attempt row lock makes concurrent submits store one answer; an empty choice still leaves earlier lines and conditionals in place."
+    enforced_by: "src/application/service/intake_service.rs::submit_answer"
+    justification: "submit_answer stores the declared shapes: chosen labels must belong to the question and count once, a single choice takes one label and a simple matrix one column per row, a choice or matrix answer (an empty one included) replaces the lines it answered before, and a choice clears the conditionals its unchosen labels had opened; the attempt row lock makes concurrent submits store one answer (tests/probes/integrity.rs i11_an_empty_choice_clears_earlier_lines_and_conditionals)."
 
   # ---- session: the advance lock + the bulk-done bypass fence ---------------
 

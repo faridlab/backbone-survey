@@ -247,3 +247,75 @@ async fn i07_database_refusals_answer_typed() {
     assert_eq!(typed.http_status(), 409);
     db.dispose().await;
 }
+
+/// A finished attempt's lines are fixed: deleting one or adding one outside the regrade
+/// refuses with the drift rule's code, so a delete-and-reinsert cannot rewrite a score.
+#[tokio::test]
+async fn i10_a_done_attempt_lines_cannot_be_deleted_or_added() {
+    let db = TestDb::new("int_churn").await;
+    let svc = Svc::new(db.pool.clone());
+    let (survey_id, token) = seed_survey_opts(&db.pool, "scoring_with_answers", 50.0, None, None, true, None).await;
+    let q = seed_question(&db.pool, survey_id, 10, "simple_choice", 10.0, true).await;
+    let _right = seed_label(&db.pool, q, "right", true, 0.0).await;
+    let wrong = seed_label(&db.pool, q, "wrong", false, 0.0).await;
+    let link = start_attempt(&svc, &token).await;
+    svc.intake.submit_answer(&link, q, AnswerDraft::Choice(vec![wrong])).await.expect("answer");
+    let done = svc.intake.finish(&link).await.expect("finish");
+
+    let refused = sqlx::query("DELETE FROM survey.survey_user_input_lines WHERE user_input_id = $1")
+        .bind(done.id)
+        .execute(&db.pool)
+        .await
+        .expect_err("a done attempt's line cannot be deleted");
+    let e = refused.as_database_error().expect("a database refusal");
+    assert_eq!(e.constraint(), Some("ck_survey_user_input_lines_score_drift_refused__survey_score_drift_refused"), "{e:?}");
+
+    let refused = sqlx::query(
+        r#"INSERT INTO survey.survey_user_input_lines (id, user_input_id, survey_id, question_id, skipped, answer_score)
+           VALUES ($1, $2, $3, $4, false, 10)"#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(done.id)
+    .bind(survey_id)
+    .bind(q)
+    .execute(&db.pool)
+    .await
+    .expect_err("a done attempt takes no new line");
+    let e = refused.as_database_error().expect("a database refusal");
+    assert_eq!(e.constraint(), Some("ck_survey_user_input_lines_score_drift_refused__survey_score_drift_refused"), "{e:?}");
+
+    // Deleting the attempt itself takes its lines with it.
+    sqlx::query("DELETE FROM survey.survey_user_inputs WHERE id = $1").bind(done.id).execute(&db.pool).await.expect("the attempt deletes");
+    assert_eq!(line_count(&db.pool, q).await, 0);
+    db.dispose().await;
+}
+
+/// Answering a choice with nothing replaces what it answered before and clears the
+/// conditional questions its earlier answer had opened.
+#[tokio::test]
+async fn i11_an_empty_choice_clears_earlier_lines_and_conditionals() {
+    let db = TestDb::new("int_empty").await;
+    let svc = Svc::new(db.pool.clone());
+    let (survey_id, token) = seed_survey_opts(&db.pool, "scoring_with_answers", 50.0, None, None, true, None).await;
+    let q = seed_question(&db.pool, survey_id, 10, "simple_choice", 10.0, true).await;
+    let opens = seed_label(&db.pool, q, "opens", true, 0.0).await;
+    let follow = seed_question(&db.pool, survey_id, 20, "numerical_box", 10.0, true).await;
+    seed_trigger(&db.pool, follow, opens).await;
+    let link = start_attempt(&svc, &token).await;
+    svc.intake.submit_answer(&link, q, AnswerDraft::Choice(vec![opens])).await.expect("answer");
+    svc.intake.submit_answer(&link, follow, AnswerDraft::Number(3.0)).await.expect("conditional");
+
+    let out = svc.intake.submit_answer(&link, q, AnswerDraft::Choice(vec![])).await.expect("empty choice");
+    let chosen: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM survey.survey_user_input_lines WHERE question_id = $1 AND NOT skipped",
+    )
+    .bind(q)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(chosen, 0, "the earlier choice is gone");
+    assert_eq!(line_count(&db.pool, q).await, 1, "one skipped line stands for the question");
+    assert_eq!(line_count(&db.pool, follow).await, 0, "the conditional it opened is cleared");
+    assert_eq!(out.totals.total, 0.0, "nothing scores");
+    db.dispose().await;
+}
